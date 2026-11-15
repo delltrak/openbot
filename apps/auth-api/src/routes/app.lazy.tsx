@@ -2,7 +2,6 @@ import { AppLoadingShell } from "@openbot/ui/features/account/AppLoadingShell";
 import { createLazyFileRoute } from "@tanstack/solid-router";
 import { createSignal, Loading, lazy, onSettled, Show } from "solid-js";
 import { showSavedAppearance } from "../../../../src/renderer/src/features/web-client/web-appearance-preference";
-import "../../../../src/renderer/src/features/web-client/web-client.css";
 
 const loadWebApp = () => import("@openbot/renderer-web");
 // The saved language loads with the code, so the first screen is not English for a moment. If it

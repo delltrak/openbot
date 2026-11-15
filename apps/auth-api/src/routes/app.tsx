@@ -1,9 +1,12 @@
 import { createFileRoute } from "@tanstack/solid-router";
 import { WEB_APPEARANCE_BOOT_SCRIPT } from "../../../../src/renderer/src/features/web-client/web-appearance-boot";
+import webStylesheet from "../../../../src/renderer/src/features/web-client/web-client.css?url";
 
 export const Route = createFileRoute("/app")({
   head: () => ({
     meta: [{ title: "OpenBot web" }, { name: "robots", content: "noindex, nofollow" }],
+    // The startup screen is in the first HTML response, before the browser client loads.
+    links: [{ rel: "stylesheet", href: webStylesheet }],
     scripts: [{ children: WEB_APPEARANCE_BOOT_SCRIPT }],
   }),
   headers: () => ({
