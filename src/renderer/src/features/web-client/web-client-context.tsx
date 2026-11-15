@@ -80,6 +80,7 @@ import { followsServerUpdate } from "../servers/server-update-flow";
 import { createSidebarPreferences } from "../sidebar/sidebar-preferences";
 import { defaultSidebarLayout } from "../sidebar/sidebar-sections";
 import { createHostRestartToasts, type HostRestartView } from "../updates/host-restart-toast";
+import { pageUsesOpenBotCloud } from "./cloud-page";
 import {
   agentPictureMark,
   deleteSavedAgentPictures,
@@ -1038,6 +1039,7 @@ export function createWebWorkspace(
     });
   }
   function refreshHosts(): Promise<void> {
+    if (pageUsesOpenBotCloud()) return Promise.resolve();
     if (hostsRefreshPromise) return hostsRefreshPromise;
     const refreshGeneration = generation;
     const refreshHostId = hostId;

@@ -1,4 +1,5 @@
 import { APP_LOGO_CORNER, APP_LOGO_EYE_POINTS, APP_LOGO_SIZE } from "@openbot/brand/app-logo-shape";
+import { isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import { heatLevel, heatmapMonths, heatmapWeeks, type ProfileStats } from "@openbot/team-client/profile-stats";
 import {
   ClipOp,
@@ -85,6 +86,7 @@ function initials(name: string): string {
 
 /** The account photo; a photo that does not load gives its place to the initials. */
 async function loadPhoto(url: string) {
+  if (isOpenBotCloudUrl(url)) return null;
   try {
     return Skia.Image.MakeImageFromEncoded(await Skia.Data.fromURI(url));
   } catch {

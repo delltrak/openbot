@@ -25,6 +25,7 @@ import { AndroidHeaderButton } from "@/shared/components/android-header-button";
 import { BlurReveal } from "@/shared/components/blur-reveal";
 import { SheetSaveAction } from "@/shared/components/sheet-save-action";
 import { SheetScrollView } from "@/shared/components/sheet-scroll-view";
+import { localImageUrl } from "@/shared/lib/local-network";
 import { isAndroid, isIOS } from "@/shared/lib/platform";
 import { type MobileText, useText } from "@/shared/lib/text";
 import { MIRROR_IN_RTL } from "@/shared/lib/text-direction";
@@ -243,7 +244,7 @@ function TemplateMessage({ title, description }: { title: string; description: s
 function TemplatePreview({ detail, apiUrl }: { detail: AgentTemplateDetail; apiUrl: string | null }) {
   const { t } = useText();
   // The account service sends the avatar as a path on its own origin.
-  const avatarUrl = detail.avatarUrl && apiUrl ? new URL(detail.avatarUrl, apiUrl).toString() : null;
+  const avatarUrl = localImageUrl(detail.avatarUrl, apiUrl ?? undefined);
   return (
     <>
       <Cascade step={0}>

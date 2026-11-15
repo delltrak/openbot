@@ -1,6 +1,7 @@
 import { parseHostedServerStatus } from "@openbot/contracts/hosted-servers";
 import { createHostedServerStatusCheck, createHostedServerWake } from "@openbot/team-client/hosted-server-wake";
 import { Effect } from "effect";
+import { pageUsesOpenBotCloud } from "./cloud-page";
 
 /**
  * The hosted servers of this browser's account. When a connection fails, `unavailable` asks whether the
@@ -9,9 +10,10 @@ import { Effect } from "effect";
  */
 export function createWebHostedServerWake(accountFetch: typeof fetch, now: () => number = Date.now) {
   const controller = new AbortController();
-  const accountRequest = (hostId: string, action: "status" | "wake") =>
-    Effect.tryPromise((signal) =>
-      accountFetch(
+  const accountRequest = (hostId: string, action: "status" | "wake") => {
+    return Effect.tryPromise((signal) => {
+      if (pageUsesOpenBotCloud()) return Promise.reject(new Error("Failed to fetch"));
+      return accountFetch(
         new URL(`/api/browser/v2/hosting/servers/${encodeURIComponent(hostId)}/${action}`, window.location.origin),
         action === "wake"
           ? {
@@ -29,8 +31,9 @@ export function createWebHostedServerWake(accountFetch: typeof fetch, now: () =>
               cache: "no-store",
               headers: { "X-OpenBot-Browser": "1" },
             },
-      ),
-    );
+      );
+    });
+  };
   const wake = createHostedServerWake((hostId) => accountRequest(hostId, "wake"), now);
   return {
     wake,

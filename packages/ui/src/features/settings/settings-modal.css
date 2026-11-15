@@ -618,16 +618,6 @@
   gap: var(--openbot-space-1);
 }
 
-.settings-modal-readonly-value {
-  min-width: 180px;
-  max-width: 300px;
-  overflow-wrap: anywhere;
-  color: var(--openbot-text-primary);
-  font-weight: var(--openbot-weight-medium);
-  text-align: end;
-  user-select: text;
-}
-
 .settings-modal-profile-photo-trigger {
   border-radius: var(--openbot-radius-pill);
 }
@@ -742,8 +732,7 @@
   }
 
   .settings-identity-name-row,
-  .settings-identity-image-row,
-  .settings-modal-account-email-row {
+  .settings-identity-image-row {
     align-items: flex-start;
     flex-direction: column;
   }
@@ -763,17 +752,10 @@
     position: static;
   }
 
-  .settings-identity-image-control,
-  .settings-modal-account-email-row .ui-item-actions {
+  .settings-identity-image-control {
     width: 100%;
     max-width: none;
     justify-content: space-between;
-  }
-
-  .settings-modal-readonly-value {
-    min-width: 0;
-    max-width: none;
-    text-align: start;
   }
 
   .settings-modal-save-bar {

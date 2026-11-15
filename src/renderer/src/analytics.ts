@@ -22,20 +22,11 @@ import {
   WORKFLOW_NODE_KINDS,
   type WorkflowNodeKind,
 } from "@openbot/contracts/ipc";
-import { isBoolean, isDynamicRecord, isFunction, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
+import { isBoolean, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
 import { normalizeEmailAddress } from "@openbot/contracts/validation";
-import { ANALYTICS_GENERATIONS } from "@openbot/telemetry";
-import { OpenPanelBase, type OpenPanelOptions } from "@openpanel/web";
-import {
-  ANALYTICS_SCHEMA_VERSION,
-  configureDesktopReports,
-  configureErrorReports,
-  webAnalyticsInstallId,
-} from "./error-reports";
+import { configureDesktopReports, configureErrorReports } from "./error-reports";
 import { MARKETPLACE_PLUGINS } from "./features/settings/marketplace-plugin-catalog";
 
-const OPENPANEL_API_URL = "https://analytics.openbot.run/api";
-const OPENPANEL_CLIENT_ID = "6c989975-87ef-4f0c-857e-ab449a65b5c2";
 const MAX_PENDING_EVENTS = 100;
 const CURATED_LISTING_PATTERN = /^openbot-curated-(?:skill|agent)-([a-z0-9][a-z0-9-]{0,63})$/u;
 const PLUGIN_SLUGS = new Set(MARKETPLACE_PLUGINS.map((plugin) => plugin.slug));
@@ -360,13 +351,7 @@ const ATTACHMENT_KINDS: readonly AttachmentKind[] = ["image", "document", "sprea
 
 type AnalyticsEventName = keyof DesktopAnalyticsEvents;
 export type DesktopAnalyticsProperties<Name extends AnalyticsEventName> = DesktopAnalyticsEvents[Name];
-type OpenPanelClient = Pick<OpenPanelBase, "setGlobalProperties" | "track" | "identify" | "clear">;
-
-type ClientFactory = (options: OpenPanelOptions) => OpenPanelClient;
 type AnalyticsIdentity = Pick<CentralAuthUser, "id" | "email">;
-type AnalyticsOperationKind = "clear" | "identify" | "track";
-type AnalyticsOperation = { kind: AnalyticsOperationKind; run: () => unknown };
-type AnalyticsOperationQueue = { active: boolean; operations: AnalyticsOperation[] };
 export interface DesktopAnalyticsScope {
   track<Name extends AnalyticsEventName>(name: Name, properties: DesktopAnalyticsEvents[Name]): void;
 }
@@ -731,10 +716,6 @@ const UPDATE_PHASES = new Set([
   "unsupported",
 ]);
 
-function shouldEnableDesktopAnalytics(appInfo: AppInfo, productionBuild: boolean): boolean {
-  return appInfo.analyticsCaptureUrl !== undefined || (productionBuild && appInfo.variant === "production");
-}
-
 function sanitizeDesktopAnalyticsEvent(
   name: AnalyticsEventName,
   properties: DesktopAnalyticsEvents[AnalyticsEventName],
@@ -837,101 +818,31 @@ function safeNumber(value: unknown, minimum: number, maximum: number): number | 
 }
 
 class DesktopAnalytics {
-  readonly #createClient: ClientFactory;
-  readonly #productionBuild: boolean;
-  #client: OpenPanelClient | null = null;
-  #anonymousClient: OpenPanelClient | null = null;
   #disabled = false;
-  /** The user shares analytics with their account. Off: events go with the install ID only. */
+  /** The user shares analytics with their account. Events are not sent. */
   #trackingEnabled = true;
-  /** The random install ID, for events that do not go with the account. */
-  #installId: string | null = null;
   #identity: AnalyticsIdentity | null = null;
   #pending: PendingEvent[] = [];
-  readonly #clientQueue: AnalyticsOperationQueue = { active: false, operations: [] };
-  readonly #anonymousQueue: AnalyticsOperationQueue = { active: false, operations: [] };
 
-  constructor(
-    createClient: ClientFactory = (options) => new OpenPanelBase(options),
-    productionBuild = import.meta.env.PROD,
-  ) {
-    this.#createClient = createClient;
-    this.#productionBuild = productionBuild;
-  }
-
+  /**
+   * Keeps the local preference and drops queued events. No client is constructed, so nothing is sent.
+   */
   configure(appInfo: AppInfo): boolean {
     configureDesktopReports(appInfo, this.#trackingEnabled, this.#identity);
-    if (this.#client) return true;
-    if (!shouldEnableDesktopAnalytics(appInfo, this.#productionBuild)) {
-      this.#disabled = true;
-      this.#pending = [];
-      return false;
-    }
-    try {
-      const clientOptions = {
-        apiUrl: appInfo.analyticsCaptureUrl ?? OPENPANEL_API_URL,
-        clientId: OPENPANEL_CLIENT_ID,
-      };
-      const client = this.#createClient(clientOptions);
-      const anonymousClient = this.#createClient(clientOptions);
-      this.#installId = appInfo.analyticsInstallId ?? null;
-      const globalProperties = {
-        __referrer: "",
-        surface: "desktop",
-        environment: "production",
-        event_schema_version: ANALYTICS_SCHEMA_VERSION,
-        app_version: appInfo.version,
-        platform: appInfo.platform,
-      };
-      client.setGlobalProperties(globalProperties);
-      anonymousClient.setGlobalProperties(globalProperties);
-      this.#client = client;
-      this.#anonymousClient = anonymousClient;
-      if (this.#trackingEnabled && this.#identity) this.#identifyClient(this.#identity);
-      this.#flush();
-      return true;
-    } catch {
-      return false;
-    }
+    this.#disabled = true;
+    this.#pending = [];
+    return false;
   }
 
   /**
-   * Starts product analytics in the web client. It sends only from the production site, like the web
-   * failure reports, and the web preference controls both.
+   * Keeps the web preference and drops queued events. The web client does not send product analytics.
    */
   configureWeb(options: { version: string; user: AnalyticsIdentity | null; enabled: boolean }): boolean {
-    if (!this.#client && (!this.#productionBuild || window.location.origin !== "https://openbot.run")) {
-      this.#disabled = true;
-      this.#pending = [];
-      return false;
-    }
     this.setTrackingEnabled(options.enabled);
-    if (!this.#client) {
-      try {
-        const clientOptions = { apiUrl: OPENPANEL_API_URL, clientId: OPENPANEL_CLIENT_ID };
-        const client = this.#createClient(clientOptions);
-        const anonymousClient = this.#createClient(clientOptions);
-        this.#installId = webAnalyticsInstallId();
-        const globalProperties = {
-          __referrer: "",
-          surface: "web",
-          environment: "production",
-          event_schema_version: ANALYTICS_GENERATIONS.web,
-          app_version: options.version,
-          platform: "web",
-        };
-        client.setGlobalProperties(globalProperties);
-        anonymousClient.setGlobalProperties(globalProperties);
-        this.#client = client;
-        this.#anonymousClient = anonymousClient;
-        if (this.#trackingEnabled && this.#identity) this.#identifyClient(this.#identity);
-        this.#flush();
-      } catch {
-        return false;
-      }
-    }
     this.setUser(options.user);
-    return true;
+    this.#disabled = true;
+    this.#pending = [];
+    return false;
   }
 
   setUser(user: AnalyticsIdentity | null): void {
@@ -940,13 +851,6 @@ class DesktopAnalytics {
     if (previous?.id === normalized?.id && previous?.email === normalized?.email) return;
     this.#identity = normalized;
     configureErrorReports(this.#trackingEnabled, normalized?.id ?? null);
-    if (!this.#client || !this.#trackingEnabled) return;
-    if (previous && (!normalized || previous.id !== normalized.id || previous.email !== normalized.email)) {
-      if (!normalized || previous.id !== normalized.id) {
-        this.#enqueue(this.#clientQueue, "clear", () => this.#client?.clear());
-      }
-    }
-    if (normalized) this.#identifyClient(normalized);
   }
 
   identify(user: AnalyticsIdentity): void {
@@ -957,29 +861,12 @@ class DesktopAnalytics {
     this.setUser(null);
   }
 
-  /**
-   * `recordOptOut` is for the user's own change from on to off: one last event records it. A value
-   * loaded at start, a reverted save or another tab's change records nothing. After "off", events
-   * go with the install ID, never with the account.
-   */
-  setTrackingEnabled(enabled: boolean, options: { recordOptOut?: boolean } = {}): void {
+  /** Saves the choice on this computer. Nothing is sent. */
+  setTrackingEnabled(enabled: boolean, _options: { recordOptOut?: boolean } = {}): void {
     if (this.#trackingEnabled === enabled) return;
     this.#trackingEnabled = enabled;
     configureErrorReports(enabled, this.#identity?.id ?? null);
-    if (!enabled) {
-      this.#pending = [];
-      this.#clientQueue.operations = [];
-      this.#anonymousQueue.operations = [];
-      // The last event records the opt-out. The clear below waits for it.
-      if (options.recordOptOut && !this.#disabled) {
-        const profileId = this.#identity?.id ?? null;
-        this.#send("analytics_preference_changed", { enabled: false }, profileId);
-      }
-      this.#enqueue(this.#clientQueue, "clear", () => this.#client?.clear());
-      this.#enqueue(this.#anonymousQueue, "clear", () => this.#anonymousClient?.clear());
-      return;
-    }
-    if (this.#identity) this.#identifyClient(this.#identity);
+    if (!enabled) this.#pending = [];
   }
 
   scope(): DesktopAnalyticsScope {
@@ -1011,84 +898,9 @@ class DesktopAnalytics {
     if (this.#disabled) return;
     const profileId = this.#trackingEnabled ? accountId : null;
     const sanitized = sanitizeDesktopAnalyticsEvent(name, properties);
-    if (!this.#client) {
-      this.#pending.push({ name, properties: sanitized, profileId, timestamp: new Date().toISOString() });
-      if (this.#pending.length > MAX_PENDING_EVENTS) this.#pending.shift();
-      return;
-    }
-    this.#send(name, sanitized, profileId);
+    this.#pending.push({ name, properties: sanitized, profileId, timestamp: new Date().toISOString() });
+    if (this.#pending.length > MAX_PENDING_EVENTS) this.#pending.shift();
   }
-
-  /**
-   * `profileId` is the account ID. A user who does not share analytics sends with the install ID,
-   * and nothing when there is no install ID. A signed-out user who shares analytics sends with no
-   * ID, so the install ID never shows next to an account.
-   */
-  #send(
-    name: AnalyticsEventName,
-    properties: SanitizedAnalyticsProperties,
-    profileId: string | null,
-    timestamp?: string,
-  ): void {
-    const subject = profileId ?? (this.#trackingEnabled ? null : this.#installId);
-    if (!subject && !this.#trackingEnabled) return;
-    const client = profileId ? this.#client : this.#anonymousClient;
-    this.#enqueue(profileId ? this.#clientQueue : this.#anonymousQueue, "track", () =>
-      client?.track(name, {
-        ...properties,
-        ...(timestamp ? { __timestamp: timestamp } : {}),
-        ...(subject ? { profileId: subject } : {}),
-      }),
-    );
-  }
-
-  #flush(): void {
-    const pending = this.#pending;
-    this.#pending = [];
-    for (const event of pending) {
-      this.#send(event.name, event.properties, event.profileId, event.timestamp);
-    }
-  }
-
-  #identifyClient(user: AnalyticsIdentity): void {
-    this.#enqueue(this.#clientQueue, "identify", () =>
-      this.#client?.identify({ profileId: user.id, email: user.email }),
-    );
-  }
-
-  #enqueue(queue: AnalyticsOperationQueue, kind: AnalyticsOperationKind, run: () => unknown): void {
-    const hasPendingTrack = queue.operations.some((operation) => operation.kind === "track");
-    if (kind === "clear" && !hasPendingTrack) {
-      queue.operations = [];
-    } else if (kind === "identify" && !hasPendingTrack) {
-      queue.operations = queue.operations.filter((operation) => operation.kind !== "identify");
-    } else if (queue.operations.filter((operation) => operation.kind === "track").length >= MAX_PENDING_EVENTS) {
-      const oldestTrack = queue.operations.findIndex((operation) => operation.kind === "track");
-      if (oldestTrack >= 0) queue.operations.splice(oldestTrack, 1);
-    }
-    queue.operations.push({ kind, run });
-    if (queue.active) return;
-    queue.active = true;
-    void this.#drain(queue);
-  }
-
-  async #drain(queue: AnalyticsOperationQueue): Promise<void> {
-    while (queue.operations.length > 0) {
-      const operation = queue.operations.shift();
-      if (!operation) continue;
-      try {
-        const result = operation.run();
-        if (isPromiseLike(result)) await result;
-      } catch {
-        // Analytics must never change application behavior or stop later events.
-      }
-    }
-    queue.active = false;
-  }
-}
-
-function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
-  return isDynamicRecord(value) && isFunction(value.then);
 }
 
 function normalizeAnalyticsIdentity(user: AnalyticsIdentity): AnalyticsIdentity | null {

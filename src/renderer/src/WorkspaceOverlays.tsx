@@ -935,8 +935,6 @@ function ServerSettings() {
           onSetPublished={setServerPublished}
           onRotateHostKey={serverRotatesHostKey(server()) ? rotateHostKey : undefined}
           onCreateInvite={createServerInvite}
-          license={appPort().license}
-          companySignIn={appPort().auth}
           onContactUs={() => void appPort().openExternal("hosted-server-contact")}
           onUpdateMember={updateServerMember}
           onRemoveMember={removeServerMember}
@@ -1097,7 +1095,7 @@ function AppSettings(props: AccountProps) {
   const auth = useAuth();
   const updates = useUpdates();
   const whatsNew = useWhatsNew();
-  const { servers, activeServer, setAddServerOpen, setServerMuted, setServerNotificationLevel } = useServers();
+  const { servers, activeServer, setServerMuted, setServerNotificationLevel } = useServers();
   const { agentStatus, agentList, userHiddenAgentIds } = useAgents();
   const { sidebarLayout, pinnedSidebarItems } = useSidebar();
   const { openServerSettings } = useServerSettings();
@@ -1161,9 +1159,13 @@ function AppSettings(props: AccountProps) {
         onRestartWhenIdle={updates.restartWhenIdle}
         onCancelIdleRestart={updates.cancelIdleRestart}
         account={props.account()}
-        onUpdateAccountName={auth.updateAccountName}
-        onUpdateAccountAvatar={auth.updateAccountAvatar}
-        onSetChatColor={auth.setChatColor}
+        onUpdateAccountName={(name) =>
+          props.account().id === "local" ? Promise.resolve() : auth.updateAccountName(name)
+        }
+        onUpdateAccountAvatar={(image) =>
+          props.account().id === "local" ? Promise.resolve() : auth.updateAccountAvatar(image)
+        }
+        onSetChatColor={(color) => (props.account().id === "local" ? Promise.resolve() : auth.setChatColor(color))}
         onCreateMobileConnect={auth.createMobileConnect}
         onCancelMobileConnect={auth.cancelMobileConnect}
         onGetMobileConnectLink={auth.getMobileConnectLink}
@@ -1173,17 +1175,10 @@ function AppSettings(props: AccountProps) {
         onRevokeMobileConnectedDevice={auth.revokeMobileConnectedDevice}
         onGetRemoteNetworkRoute={() => settingsPort().getRemoteNetworkRoute()}
         onSetRemoteNetworkRoute={(route) => settingsPort().setRemoteNetworkRoute({ route })}
-        onListAccountSessions={auth.listAccountSessions}
-        onRevokeAccountSession={auth.revokeAccountSession}
-        onSignOut={platform.landingPreview ? undefined : auth.logoutCentralAccount}
-        billingApi={appPort().billing}
-        licenseApi={appPort().license}
+        onListAccountSessions={props.account().id === "local" ? undefined : auth.listAccountSessions}
+        onRevokeAccountSession={props.account().id === "local" ? undefined : auth.revokeAccountSession}
+        onSignOut={platform.landingPreview || props.account().id === "local" ? undefined : auth.logoutCentralAccount}
         onContactUs={() => void appPort().openExternal("hosted-server-contact")}
-        hostedServersApi={appPort().hostedServers}
-        onAddHostedServer={() => {
-          setAppSettingsOpen(false);
-          setAddServerOpen(true, "settings_billing");
-        }}
         codexLiveAccess={codexLiveAccess()}
         onConnectCodex={() => {
           setAppSettingsOpen(false);

@@ -6,6 +6,7 @@
 // window that started a view is its owner: it alone gets the frames, and only it stops the view.
 
 import type { BrowserLiveViewEvent } from "@openbot/contracts/ipc";
+import { isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import {
   BROWSER_VIEW_FRAME_ACK_QUERY,
   type BrowserViewInput,
@@ -65,6 +66,9 @@ export class BrowserViewClient {
       // An older client never does, and the host must not retain every frame for the whole session.
       if (this.#options.servers.supportsCapability(serverId, TEAM_BROWSER_VIEW_FRAME_POINT_CAPABILITY)) {
         url.searchParams.set(BROWSER_VIEW_FRAME_ACK_QUERY, "1");
+      }
+      if (isOpenBotCloudUrl(url.toString())) {
+        return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.remote.requestFailed")) });
       }
       const socket = yield* remoteDecode(() => new WebSocket(url, stream.protocols));
       socket.binaryType = "arraybuffer";

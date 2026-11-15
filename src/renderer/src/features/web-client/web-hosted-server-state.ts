@@ -30,13 +30,11 @@ export function createWebHostedServers(options: WebHostedServersOptions) {
   const [loaded, setLoaded] = createSignal(false);
   const [hostedIds, setHostedIds] = createSignal<ReadonlySet<string>>(new Set());
   async function refresh(): Promise<boolean> {
-    // A failed read keeps the last answer: a network error does not turn the plans off.
-    const list = await calls.list().catch(() => null);
-    if (!list) return available();
-    setAvailable(list.available);
+    // Hosted servers belong to the cloud account. This build does not ask for them.
+    setAvailable(false);
     setLoaded(true);
-    setHostedIds(new Set(list.servers.map((server) => server.serverId)));
-    return list.available;
+    setHostedIds(new Set<string>());
+    return false;
   }
   void refresh();
   // A server that the add server dialog creates comes into the host list as an owned host. Each owned
@@ -56,7 +54,6 @@ export function createWebHostedServers(options: WebHostedServersOptions) {
   );
   createEffect(options.hostingReturn, (resume) => {
     if (!resume) return;
-    setAddServer({ resume, entryPoint: "checkout_resume", order: null });
     options.onHostingReturnConsumed?.();
   });
 
@@ -70,15 +67,9 @@ export function createWebHostedServers(options: WebHostedServersOptions) {
     /** The add server dialog when it is open, with the checkout that it continues. */
     addServer,
     closeAddServer: () => setAddServer(null),
-    /**
-     * The plus button opens the add server dialog when the account can create hosted servers, else the
-     * join dialog. It uses the last answer, so the click does not wait for the network; the read after it
-     * is for the next click.
-     */
-    openAddServer(entryPoint: HostedServerEntryPoint, order: PricingOrder | null = null): void {
-      if (available()) setAddServer({ resume: null, entryPoint, order });
-      else options.onJoin();
-      void refresh();
+    /** The plus button opens the join dialog. Hosted plans belong to the cloud account. */
+    openAddServer(_entryPoint: HostedServerEntryPoint, _order: PricingOrder | null = null): void {
+      options.onJoin();
     },
   };
 }

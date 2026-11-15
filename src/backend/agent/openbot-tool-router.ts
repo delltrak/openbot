@@ -61,6 +61,8 @@ import { sourceText } from "@openbot/i18n/source";
 import { createOpenBotLogger, redactText, registerSecretValue, toLogValue } from "@openbot/logging";
 import { Effect, Result } from "effect";
 import { z } from "zod";
+import { runAdbTool } from "../adb-runner";
+import { OPENBOT_ADB_NAMESPACE } from "../adb-tools";
 import type { AgentApiKeys, SavedApiKey } from "../agent-api-keys";
 import type { AgentClient, AgentProvider } from "../agent-client";
 import type { AgentTables } from "../agent-data/agent-tables";
@@ -454,8 +456,9 @@ export interface OpenBotToolRouterOptions {
 
 /**
  * Owns the answer to every request a provider process sends to OpenBot: approvals and prompts go to
- * the attention registry, browser tools to the browser, and the `openbot` tools to the controller
- * that owns each one. The profile, reaction and `send_message` tools are answered here.
+ * the attention registry, browser tools to the browser, adb tools to the adb runner, and the
+ * `openbot` tools to the controller that owns each one. The profile, reaction and `send_message`
+ * tools are answered here.
  *
  * It never imports the agent service facade.
  */
@@ -863,6 +866,11 @@ export class OpenBotToolRouter {
                 ],
               });
             }
+            return;
+          }
+          if (toolRequest.params.namespace === OPENBOT_ADB_NAMESPACE) {
+            const result = yield* this.#adbTool(toolRequest.params);
+            if (!toolRequest.signal?.aborted && client.running) client.respond(toolRequest.id, result);
             return;
           }
           if (toolRequest.params.namespace === "openbot") {
@@ -2425,6 +2433,42 @@ export class OpenBotToolRouter {
         Effect.succeed(openBotToolFailure(this.#hooks.redactMcp(failure.reason))),
       ),
     );
+  });
+
+  /**
+   * `openbot_adb`. Full access and this computer's own chat only. The runner refuses a path outside
+   * the workspace, and it never starts a shell on this computer.
+   */
+  readonly #adbTool = Effect.fn("OpenBotToolRouter.adbTool")(function* (
+    this: OpenBotToolRouter,
+    params: DynamicToolCallParams,
+  ) {
+    const agentId = this.#conversation.agentForThread(params.threadId);
+    const agent = agentId ? this.#hooks.listAgents().find((candidate) => candidate.id === agentId) : undefined;
+    if (!agent) return openBotToolFailure(sourceText("error.agent.toolRequestInvalid"));
+    const threadId = this.#conversation.publicThreadId(agent.id, params.threadId);
+    const shared =
+      this.#messaging.store.linkForThread(threadId) !== null ||
+      this.#channels.store.channelForThread(threadId) !== null;
+    const outcome = yield* Effect.result(
+      runAdbTool({
+        tool: params.tool,
+        arguments: params.arguments,
+        agent,
+        sharedRoot: this.#store.sharedRoot,
+        audience: shared ? "shared" : "local",
+      }),
+    );
+    if (Result.isFailure(outcome)) {
+      const cause = outcome.failure.cause;
+      const message = cause instanceof Error ? cause.message : "adb failed.";
+      return openBotToolFailure(this.#hooks.redactMcp(message));
+    }
+    const response = openBotToolResult(outcome.success);
+    return {
+      ...response,
+      contentItems: response.contentItems.map((item) => ({ ...item, text: this.#hooks.redactMcp(item.text) })),
+    };
   });
 
   /**

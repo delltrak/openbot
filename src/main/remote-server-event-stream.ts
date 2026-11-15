@@ -37,6 +37,7 @@ import type {
   TeamPresenceSnapshot,
 } from "@openbot/contracts/ipc";
 import { decodeRecord } from "@openbot/contracts/ipc-decoding";
+import { isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import { isString } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { type TeamCurrentCapability, teamCapabilitiesForProtocol } from "@openbot/contracts/team-protocol/current";
@@ -550,6 +551,9 @@ export class RemoteEventStream {
       const socketProtocols = this.#appVersion
         ? [TEAM_PROTOCOL_V1_WEBSOCKET, `openbot-token.${this.#servers.token(server)}`]
         : [REMOTE_EVENT_SNAPSHOT_PROTOCOL, REMOTE_EVENT_PROTOCOL, `openbot-token.${this.#servers.token(server)}`];
+      if (isOpenBotCloudUrl(eventsUrl.toString())) {
+        return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.remote.requestFailed")) });
+      }
       const socket = yield* remoteDecode(() => new WebSocket(eventsUrl, socketProtocols));
       let agentEventsReady = false;
       const bufferedAgentEvents: AgentEvent[] = [];

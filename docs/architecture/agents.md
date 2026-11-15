@@ -939,6 +939,7 @@ The other providers receive the dynamic tool definitions; Claude exposes the sam
 its SDK MCP bridge. `src/backend/openbot-tools.ts` owns the tool names, descriptions, and Zod
 argument shapes used by both declarations. It reuses the profile, section, and routine schemas.
 Claude uses the SDK’s `AskUserQuestion` flow instead of the `ask_user` MCP tool.
+`openbot_adb` is the built-in adb tool. It lists phones, runs a program on an authorized phone, installs an APK, copies files, saves a screenshot, and reads logcat. The child process is `adb` itself, so the arguments never pass through a shell on this computer. A file it reads or writes stays in the agent workspace, OpenBot Shared, or a folder the user added. The tool requires Full access and the owner's own chat. It does not turn wireless debugging on. A phone that has not accepted this computer stays unauthorized, and the tool does not accept the prompt for the user.
 There is no separate prompt-generation button or review dialog.
 
 Agents can organize teammates into flat sidebar sections through `list_sections`, `create_section`,

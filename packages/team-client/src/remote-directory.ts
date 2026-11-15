@@ -9,6 +9,7 @@ import {
   parseInviteUrl,
   selfHostedApiOrigin,
 } from "@openbot/contracts/invite-links";
+import { isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import type { MobileConnectHostBinding } from "@openbot/contracts/mobile-connect";
 import { decodeRemoteSession, decodeRemoteSessionTicket } from "@openbot/contracts/remote-control-plane";
 import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
@@ -590,6 +591,12 @@ export class RemoteTeamDirectoryClient {
         body: { clientPublicKey },
       });
       const ticket = yield* directoryDecode(() => decodeRemoteSessionTicket(value));
+      if (isOpenBotCloudUrl(ticket.signalUrl)) {
+        return yield* directoryFailure(
+          sourceText("error.remote.hostOffline"),
+          referenceFrom("signal", "host_unavailable"),
+        );
+      }
       return { sessionId, signalUrl: ticket.signalUrl, ticket: ticket.ticket };
     });
   }
@@ -598,6 +605,9 @@ export class RemoteTeamDirectoryClient {
     path: string,
     options: { method?: string; body?: object; authenticated?: boolean } = {},
   ): Effect.Effect<unknown, DirectoryFailure> {
+    if (isOpenBotCloudUrl(this.#apiUrl)) {
+      return Effect.fail(directoryFailure(sourceText("error.remote.directoryUnreachable"), "network/directory"));
+    }
     return Effect.acquireUseRelease(
       Effect.sync(() => {
         const controller = new AbortController();

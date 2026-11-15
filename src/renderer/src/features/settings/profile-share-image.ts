@@ -112,7 +112,8 @@ async function drawHeader(
   const logoSize = 56;
   const textX = PAD + AVATAR + 24;
   const textWidth = WIDTH - PAD - logoSize - 24 - textX;
-  const name = account.name?.trim() || account.email.split("@")[0] || account.email;
+  const name =
+    account.name?.trim() || (account.email ? account.email.split("@")[0] || account.email : t("app.host.thisComputer"));
   context.fillStyle = colors.text;
   context.font = `600 40px ${FONT}`;
   const nameLine = context.measureText(name).width > textWidth ? ellipsize(context, name, textWidth) : name;

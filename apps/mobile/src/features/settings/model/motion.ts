@@ -6,7 +6,7 @@ export interface MotionPreferences {
   allAnimations: boolean;
   /** The faces that agent avatars make while they work and rest. */
   agentFaces: boolean;
-  /** The message field shrinks to a small bar while the keyboard is closed. */
+  /** The message field shrinks to a small bar while the keyboard is closed. Off keeps the full field. */
   composerResize: boolean;
   /** A reply types out and its new words fade in. */
   textReveal: boolean;
@@ -19,7 +19,7 @@ export type MotionPreference = keyof MotionPreferences;
 const DEFAULTS: MotionPreferences = {
   allAnimations: true,
   agentFaces: true,
-  composerResize: true,
+  composerResize: false,
   textReveal: true,
   searchTransitions: true,
 };

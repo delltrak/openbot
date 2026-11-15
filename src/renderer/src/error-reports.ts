@@ -7,13 +7,10 @@ import {
   currentAnalyticsInstallId,
   type FailureProperties,
   newAnalyticsInstallId,
-  openPanelTransport,
-  ReportQueue,
+  type ReportQueue,
   safeProperties,
 } from "@openbot/telemetry";
-import { indexedReportStorage } from "@openbot/telemetry/browser";
 import { Effect } from "effect";
-import { version } from "../../../package.json";
 
 /** The desktop schema generation. Product events and failure reports send the same value. */
 export const ANALYTICS_SCHEMA_VERSION = ANALYTICS_GENERATIONS.desktop;
@@ -24,7 +21,7 @@ let configured = false;
 const startup: { properties: FailureProperties; timestamp: number }[] = [];
 let profileId: string | null = null;
 /** The random install ID. Reports go with it when the user does not share analytics. */
-let installId: string | null = null;
+const installId: string | null = null;
 /** The install ID of this page. Each read gives the same ID, so analytics and reports agree. */
 let webInstallId: string | null | undefined;
 /** The web analytics preference. The key keeps its first name, so stored choices stay. */
@@ -37,27 +34,12 @@ const WEB_KEEP_OFF = "openbot:web:analytics-keep-off";
 const WEB_INSTALL_ID = "openbot:web:analytics-install-id";
 
 export function configureDesktopReports(
-  info: AppInfo,
-  tracking: boolean,
-  user: Pick<CentralAuthUser, "id" | "email"> | null,
+  _info: AppInfo,
+  _tracking: boolean,
+  _user: Pick<CentralAuthUser, "id" | "email"> | null,
 ): void {
-  const capture = info.analyticsCaptureUrl;
-  if (capture === undefined && (!import.meta.env.PROD || info.variant !== "production")) return;
-  queue ??= new ReportQueue(
-    indexedReportStorage("openbot-desktop-error-reports-v1"),
-    openPanelTransport({
-      clientId: "6c989975-87ef-4f0c-857e-ab449a65b5c2",
-      ...(capture === undefined ? {} : { endpoint: `${capture}/track` }),
-    }),
-    {
-      surface: "desktop",
-      platform: info.platform,
-      app_version: info.version,
-      event_schema_version: ANALYTICS_SCHEMA_VERSION,
-    },
-  );
-  installId = info.analyticsInstallId ?? null;
-  configureErrorReports(tracking, user?.id ?? null);
+  // Failure reports stay on this computer. No queue is posted.
+  configured = true;
 }
 
 /**
@@ -129,14 +111,8 @@ function webAnalyticsDefault(): boolean {
 
 export function configureWebReports(user: Pick<CentralAuthUser, "id" | "email"> | null): void {
   webSignedIn = user !== null;
-  if (!import.meta.env.PROD || window.location.origin !== "https://openbot.run") return;
-  queue ??= new ReportQueue(
-    indexedReportStorage("openbot-web-error-reports-v1"),
-    openPanelTransport({ clientId: "6c989975-87ef-4f0c-857e-ab449a65b5c2" }),
-    { surface: "web", platform: "web", app_version: version, event_schema_version: ANALYTICS_GENERATIONS.web },
-  );
-  installId = webAnalyticsInstallId();
-  configureErrorReports(webReportsEnabled(), user?.id ?? null);
+  // Failure reports stay in this browser. No queue is posted.
+  configured = true;
 }
 
 /**

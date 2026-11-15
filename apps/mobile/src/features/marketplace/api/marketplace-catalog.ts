@@ -6,6 +6,7 @@ import type {
   MarketplaceSkillPage,
   MarketplaceSkillQuery,
 } from "@openbot/contracts/ipc";
+import { isLocalOpenBotServiceUrl, isOpenBotCloudHostname } from "@openbot/contracts/local-network";
 import { runTeamEffect } from "@openbot/team-client";
 import { createMarketplaceCatalog, type MarketplaceCatalog } from "@openbot/team-client/marketplace-catalog";
 import { fetch } from "@/features/support/model/logged-fetch";
@@ -27,8 +28,11 @@ function catalogFor(apiUrl: string): MarketplaceCatalog {
     if (init?.signal?.aborted) controller.abort();
     const timeout = setTimeout(abort, CATALOG_REQUEST_TIMEOUT_MS);
     try {
+      if (!isLocalOpenBotServiceUrl(apiUrl)) throw new TypeError("OpenBot does not contact this host.");
+      const target = new URL(String(input), apiUrl);
+      if (isOpenBotCloudHostname(target.hostname)) throw new TypeError("OpenBot does not contact this host.");
       // The catalog asks only for JSON; it sends no body and no credential.
-      return await fetch(new URL(String(input), apiUrl).toString(), {
+      return await fetch(target.toString(), {
         headers: { accept: "application/json" },
         signal: controller.signal,
       });
@@ -47,6 +51,7 @@ export function catalogImageUrl(apiUrl: string, url: string | null | undefined):
   if (!url) return null;
   try {
     const resolved = new URL(url, apiUrl);
+    if (isOpenBotCloudHostname(resolved.hostname)) return null;
     // A development account service answers on plain http; its own images stay on its origin.
     return resolved.protocol === "https:" || resolved.origin === new URL(apiUrl).origin ? resolved.toString() : null;
   } catch {
@@ -55,10 +60,11 @@ export function catalogImageUrl(apiUrl: string, url: string | null | undefined):
 }
 
 /** The icon of a plugin's app, from the account service rather than the vendor's site. */
-export function pluginIconUrl(apiUrl: string, slug: string, appId: string): string {
+export function pluginIconUrl(apiUrl: string, slug: string, appId: string): string | null {
+  if (!isLocalOpenBotServiceUrl(apiUrl)) return null;
   const url = new URL(`/plugins/icon/${encodeURIComponent(slug)}`, apiUrl);
   url.searchParams.set("app", appId);
-  return url.toString();
+  return isOpenBotCloudHostname(url.hostname) ? null : url.toString();
 }
 
 export function listMarketplaceAgents(

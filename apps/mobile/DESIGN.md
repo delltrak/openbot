@@ -52,7 +52,8 @@ Native ownership takes priority over HeroUI for navigation chrome. HeroUI owners
 
 ### Big headers
 
-Home, Routines and Usage have a big header that the screen draws, not `headerLargeTitle`. The native
+Routines and Usage have a big header that the screen draws, not `headerLargeTitle`. Home does not
+draw the server name as a title. The native
 large title does not work under the custom scroll edge effect on iOS 27, and Android has none. Use
 `src/shared/components/large-title.tsx`:
 
@@ -142,9 +143,10 @@ for each device or pose: a folded iPhone Duo is a compact window, and an open on
   iOS its 48 pt buttons, and the chat header's beside it, are centred in the native bar height
   (`NATIVE_BAR_HEIGHT`: 50 pt on iPad, 44 pt on iPhone), so they line up with the native bar buttons
   of the other screens (Threads, Marketplace and others). A phone keeps the chat header 8 pt down.
-- On a wide window, bottom search fields (home, Marketplace) take the resting height and bottom gap
+- On a wide window, bottom search fields (home, Marketplace) take the height and bottom gap
   of the chat composer (`useBottomFieldMetrics`, from `shared/lib/composer-metrics.ts`), so they line
-  up with the composer beside them. The phone keeps the large field. Use the hook for a new one.
+  up with the composer beside them. The open field is the default. The compact bar, when Animations
+  turns it on, uses the shorter resting height. The phone keeps the large field. Use the hook for a new one.
 - The stack stays mounted when the layout changes. A chat that is open when the device folds stays
   open, with its state. Home then shows the list again under it.
 - On a wide window, `connected` shows the empty detail, the pane draws its own bar (the native bar

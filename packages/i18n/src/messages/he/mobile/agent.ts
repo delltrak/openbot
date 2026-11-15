@@ -609,6 +609,8 @@ export const messages = {
   "mobile.agent.home.sort.manual": "ידני",
   "mobile.agent.home.sort.unreadGroup": "לא נקראו בקבוצה",
   "mobile.agent.home.sort.unreadFirst": "לא נקראו ראשונים בתיקיות",
+  "mobile.agent.home.orderRecent": "הודעות אחרונות",
+  "mobile.agent.home.orderManual": "הסדר שלי",
   "mobile.agent.route.appearance": "מראה",
   "mobile.agent.route.cropPhoto": "הזזה והתאמת גודל",
   "mobile.agent.info.memory.inclusion.label": "שימוש בזיכרון",

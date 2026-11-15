@@ -61,7 +61,12 @@ export function createSettingsProfileStore(props: ProfileStoreProps, isActive: (
   let nameInput: HTMLInputElement | undefined;
   let sessionsRevision = 0;
 
-  const accountName = () => props.account.name?.trim() || props.account.email.split("@")[0] || props.account.email;
+  const accountName = () => {
+    const named = props.account.name?.trim();
+    if (named) return named;
+    if (props.account.email) return props.account.email.split("@")[0] || props.account.email;
+    return currentText().t("app.host.thisComputer");
+  };
 
   async function refreshSessions() {
     if (!props.onListAccountSessions) return;

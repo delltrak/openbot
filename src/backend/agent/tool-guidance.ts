@@ -1,4 +1,5 @@
 import { SIDEBAR_FOLDER_LEVELS } from "@openbot/contracts/ipc";
+import { OPENBOT_ADB_NAMESPACE } from "../adb-tools";
 import { OPENBOT_BROWSER_NAMESPACE } from "../browser-tools";
 import { ROUTINE_INSTRUCTION_RULE } from "../routine-tool-schema";
 
@@ -21,9 +22,13 @@ export function toolGuidance(
   options: ToolGuidanceOptions = { passwordVault: true },
 ): string[] {
   if (namespace === OPENBOT_BROWSER_NAMESPACE) return browserGuidance(tool, options);
+  if (namespace === OPENBOT_ADB_NAMESPACE) return [ADB_GUIDANCE];
   const guidance = openbotGuidance(namespace, tool);
   return guidance ? [guidance] : [];
 }
+
+const ADB_GUIDANCE =
+  "openbot_adb controls an Android phone that adb sees on this computer. USB debugging must be on, and the phone must have accepted this computer. Call devices first. Pass serial when more than one phone is authorized. shell args start with the program name and run on the phone, not in a shell on this computer. install, push, pull and screencap use a file in the workspace or OpenBot Shared. screencap returns the PNG path. These tools need Full access and this computer's own chat. They do not turn wireless debugging on.";
 
 const BROWSER_SIGN_IN_TOOLS = new Set(["submit_secret", "list_logins", "request_takeover"]);
 const BROWSER_VAULT_TOOLS = new Set([

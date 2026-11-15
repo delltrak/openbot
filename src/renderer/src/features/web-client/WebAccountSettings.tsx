@@ -40,6 +40,7 @@ import { playSoundChoice, readTaskSound, setTaskSound } from "../../completion-s
 import { webReportsEnabled } from "../../error-reports";
 import { useLayout } from "../../layout";
 import { currentDevicePlatform, setSendShortcutMode, useSendShortcutMode } from "../../send-shortcut-preference";
+import { pageUsesOpenBotCloud } from "./cloud-page";
 import type { WebAccountCalls } from "./web-account";
 import { sendWebAnalyticsChoice, setWebAnalyticsEnabled } from "./web-analytics";
 import { setWebLiveVoice, useWebLiveVoice } from "./web-live-voice";
@@ -92,10 +93,13 @@ export interface WebAccountSettingsProps {
 export default function WebAccountSettings(props: WebAccountSettingsProps) {
   const [reportsEnabled, setReportsEnabled] = createSignal(webReportsEnabled());
   const { t, errorMessage } = useText();
-  const saveChatColor = (color: AvatarColor | null) =>
+  const usesAccountService = () => props.account.email !== "" && !pageUsesOpenBotCloud();
+  const saveChatColor = (color: AvatarColor | null) => {
+    if (!usesAccountService()) return;
     void props.calls
       .setChatColor(color)
       .catch((error: unknown) => toast.error(errorMessage(error, t("settings.preferences.saveFailed")), { error }));
+  };
   const [activeTab, setActiveTab] = createSignal<WebAccountSettingsTab>("profile");
   const [taskSound, setTaskSoundChoice] = createSignal(readTaskSound());
   const sendShortcutMode = useSendShortcutMode();
@@ -122,10 +126,11 @@ export default function WebAccountSettings(props: WebAccountSettingsProps) {
       get account() {
         return props.account;
       },
-      onUpdateAccountName: (name) => props.calls.updateName(name),
-      onUpdateAccountAvatar: (image) => props.calls.updateAvatar(image),
-      onListAccountSessions: () => props.calls.listSessions(),
-      onRevokeAccountSession: (sessionId) => props.calls.revokeSession(sessionId),
+      onUpdateAccountName: (name) => (usesAccountService() ? props.calls.updateName(name) : Promise.resolve()),
+      onUpdateAccountAvatar: (image) => (usesAccountService() ? props.calls.updateAvatar(image) : Promise.resolve()),
+      onListAccountSessions: () => (usesAccountService() ? props.calls.listSessions() : Promise.resolve([])),
+      onRevokeAccountSession: (sessionId) =>
+        usesAccountService() ? props.calls.revokeSession(sessionId) : Promise.resolve(),
     },
     () => activeTab() === "profile",
   );
@@ -196,8 +201,8 @@ export default function WebAccountSettings(props: WebAccountSettingsProps) {
           <SettingsProfileTab
             store={profile}
             account={props.account}
-            canListSessions
-            canRevokeSession
+            canListSessions={usesAccountService()}
+            canRevokeSession={usesAccountService()}
             onSignOut={props.onSignOut}
           />
         </Tabs.Content>

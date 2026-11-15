@@ -187,38 +187,42 @@ export function InitialSetup(props: InitialSetupProps) {
       <main class="initial-setup-screen">
         <Dialog.Content as="section" class="initial-setup" data-dialog-surface="unstyled" ref={setDialogElement}>
           <header class="initial-setup-header">
-            <div class="initial-setup-account-row">
-              <Show when={route()}>
-                <Button
-                  variant="ghost"
-                  type="button"
-                  class="initial-setup-back"
-                  aria-label={t("onboarding.setup.back")}
-                  onClick={() => {
-                    providers.clearErrors();
-                    setRoute(null);
-                  }}
-                >
-                  <svg viewBox="0 0 20 20" aria-hidden="true">
-                    <path d="m12.5 4.5-5 5 5 5" />
-                  </svg>
-                </Button>
-              </Show>
-              <span class="initial-setup-account">
-                <i aria-hidden="true" />
-                {props.accountEmail}
-              </span>
-              <Show when={props.onLogout}>
-                <Button
-                  variant="ghost"
-                  type="button"
-                  class="initial-setup-signout"
-                  onClick={() => void props.onLogout?.()}
-                >
-                  {t("onboarding.setup.signOut")}
-                </Button>
-              </Show>
-            </div>
+            <Show when={route() || props.accountEmail || props.onLogout}>
+              <div class="initial-setup-account-row">
+                <Show when={route()}>
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    class="initial-setup-back"
+                    aria-label={t("onboarding.setup.back")}
+                    onClick={() => {
+                      providers.clearErrors();
+                      setRoute(null);
+                    }}
+                  >
+                    <svg viewBox="0 0 20 20" aria-hidden="true">
+                      <path d="m12.5 4.5-5 5 5 5" />
+                    </svg>
+                  </Button>
+                </Show>
+                <Show when={props.accountEmail}>
+                  <span class="initial-setup-account">
+                    <i aria-hidden="true" />
+                    {props.accountEmail}
+                  </span>
+                </Show>
+                <Show when={props.onLogout}>
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    class="initial-setup-signout"
+                    onClick={() => void props.onLogout?.()}
+                  >
+                    {t("onboarding.setup.signOut")}
+                  </Button>
+                </Show>
+              </div>
+            </Show>
             <p class="initial-setup-eyebrow">{t("onboarding.setup.eyebrow")}</p>
             <Dialog.Title as="h1" id="initial-setup-title">
               {title()}
@@ -331,7 +335,7 @@ export function InitialSetup(props: InitialSetupProps) {
                   </>
                 )}
               </Show>
-              <Show when={!invitePreview()}>
+              <Show when={props.accountEmail && !invitePreview()}>
                 <p class="setup-remote-note">
                   {joinNoteParts()[0]}
                   <strong>{props.accountEmail}</strong>

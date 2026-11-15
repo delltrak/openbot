@@ -21,6 +21,7 @@ import { useProfileActivity } from "@/features/settings/model/use-profile-activi
 import { ProfileAvatar } from "@/shared/components/profile-avatar";
 import { APP_FONT } from "@/shared/lib/app-font";
 import { haptics } from "@/shared/lib/haptics";
+import { localImageUrl } from "@/shared/lib/local-network";
 import { pickAvatarPhoto } from "@/shared/lib/pick-avatar-photo";
 import { useText } from "@/shared/lib/text";
 
@@ -56,7 +57,7 @@ export function ProfileSettingsScreen() {
         ? t("mobile.settings.profile.nameUnsafe")
         : t("mobile.settings.profile.nameLength")
       : null;
-  const avatarUrl = session.user.avatarUrl ? new URL(session.user.avatarUrl, session.apiUrl).toString() : null;
+  const avatarUrl = localImageUrl(session.user.avatarUrl, session.apiUrl);
 
   async function perform(
     action: ProfileAction,
@@ -179,15 +180,7 @@ export function ProfileSettingsScreen() {
           setError(null);
         }}
         onNameSubmit={() => void saveName()}
-        subtitle={
-          <Typography.Paragraph
-            selectable
-            accessibilityLabel={`${t("mobile.settings.profile.email")}: ${session.user.email}`}
-            className="text-grouped-secondary"
-          >
-            {session.user.email}
-          </Typography.Paragraph>
-        }
+        subtitle={null}
       />
       {nameError || error ? (
         <Typography.Paragraph accessibilityRole="alert" className="px-1 text-danger-text">

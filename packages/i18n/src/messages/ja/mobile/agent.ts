@@ -607,6 +607,8 @@ export const messages = {
   "mobile.agent.home.sort.manual": "手動",
   "mobile.agent.home.sort.unreadGroup": "未読をグループにまとめる",
   "mobile.agent.home.sort.unreadFirst": "フォルダー内で未読を先頭に",
+  "mobile.agent.home.orderRecent": "最近のメッセージ",
+  "mobile.agent.home.orderManual": "自分の順番",
   "mobile.agent.route.appearance": "外観",
   "mobile.agent.route.cropPhoto": "移動と拡大縮小",
   "mobile.agent.info.memory.inclusion.label": "メモリーの使い方",

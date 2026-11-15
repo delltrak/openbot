@@ -153,43 +153,51 @@ const PinnedAgentItem = memo(function PinnedAgentItem({ agent }: { agent: Mobile
       delayLongPress={longPressDelay}
       onLongPress={holdMenu.onLongPress}
       onPressOut={holdMenu.onPressOut}
-      style={({ pressed }) => ({ opacity: pressed ? 0.58 : 1 })}
     >
-      <AgentPinAvatar agentId={agent.id} location="pinned" size={64}>
-        <BloubAvatar
-          agentId={agent.id}
-          serverId={agent.serverId}
-          hue={agent.avatarHue}
-          color={agent.avatarColor}
-          seed={agent.avatarSeed}
-          size={64}
-          animateIdle={false}
-          rings
-          withThreads
-        />
-        {/* As on the desktop, a wait outranks the unread count in the corner of the avatar. */}
-        {waitReason ? (
-          <AgentWaitBadge reason={waitReason} size={22} />
-        ) : unreadCount > 0 || unreadThreads ? (
-          <AgentUnreadBadge count={unreadCount} avatarSize={64} />
-        ) : null}
-      </AgentPinAvatar>
-      <View className="w-full gap-0.5">
-        <Typography.Paragraph
-          align="center"
-          className="w-full text-text-secondary"
-          numberOfLines={1}
-          style={typeScale.small}
-        >
-          {agent.name}
-        </Typography.Paragraph>
-        {agent.title.trim() ? (
-          <Typography.Paragraph align="center" className="w-full text-muted" numberOfLines={1} style={typeScale.small}>
-            {agent.title.trim()}
-          </Typography.Paragraph>
-        ) : null}
-      </View>
-      {agentChatPreview.measurer}
+      {({ pressed }) => (
+        <>
+          <AgentPinAvatar agentId={agent.id} location="pinned" size={64}>
+            <BloubAvatar
+              agentId={agent.id}
+              serverId={agent.serverId}
+              hue={agent.avatarHue}
+              color={agent.avatarColor}
+              seed={agent.avatarSeed}
+              size={64}
+              animateIdle={false}
+              rings
+              withThreads
+            />
+            {/* As on the desktop, a wait outranks the unread count in the corner of the avatar. */}
+            {waitReason ? (
+              <AgentWaitBadge reason={waitReason} size={22} />
+            ) : unreadCount > 0 || unreadThreads ? (
+              <AgentUnreadBadge count={unreadCount} avatarSize={64} />
+            ) : null}
+          </AgentPinAvatar>
+          <View className="w-full gap-0.5">
+            <Typography.Paragraph
+              align="center"
+              className={unreadCount > 0 && !waitReason ? "w-full font-semibold" : "w-full text-text-secondary"}
+              numberOfLines={1}
+              style={[typeScale.small, { opacity: pressed ? 0.72 : 1 }]}
+            >
+              {agent.name}
+            </Typography.Paragraph>
+            {agent.title.trim() ? (
+              <Typography.Paragraph
+                align="center"
+                className="w-full text-muted"
+                numberOfLines={1}
+                style={typeScale.small}
+              >
+                {agent.title.trim()}
+              </Typography.Paragraph>
+            ) : null}
+          </View>
+          {agentChatPreview.measurer}
+        </>
+      )}
     </ChatLinkPressable>
   );
   return (

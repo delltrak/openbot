@@ -7,11 +7,14 @@ export const COMPOSER_FIELD_VERTICAL_PADDING = 26;
 /** At rest the composer gives up this much of the height of its single line. */
 const COMPOSER_REST_HEIGHT_LOSS = 8;
 
+/** The height of the open composer, with one line of text at the user's text size. */
+export function openComposerHeight(fontScale: number): number {
+  return Math.max(COMPOSER_TOOLBAR_HEIGHT, 22 * fontScale + COMPOSER_FIELD_VERTICAL_PADDING);
+}
+
 /** The height of the composer at rest, with one line of text at the user's text size. */
 export function restingComposerHeight(fontScale: number): number {
-  return (
-    Math.max(COMPOSER_TOOLBAR_HEIGHT, 22 * fontScale + COMPOSER_FIELD_VERTICAL_PADDING) - COMPOSER_REST_HEIGHT_LOSS
-  );
+  return openComposerHeight(fontScale) - COMPOSER_REST_HEIGHT_LOSS;
 }
 
 /** The space under the composer: the home indicator, or a minimum gap. */

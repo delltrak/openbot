@@ -25,6 +25,7 @@ import {
 } from "@openbot/contracts/ipc";
 import { decodeRecord, requiredString } from "@openbot/contracts/ipc-decoding";
 import type { LiveActivityRelayPush } from "@openbot/contracts/live-activity-relay";
+import { isLocalNetworkHostname, isOpenBotCloudHostname, isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import {
   createMobileConnectUrl,
   isMobileConnectHostBinding,
@@ -89,8 +90,9 @@ interface CentralAuthEvents {
 type AuthFetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 interface CentralAuthManagerOptions {
-  apiUrl: string;
-  mobileConnectApiUrl?: string;
+  /** Null when this computer has no account host. A null host performs no fetch. */
+  apiUrl: string | null;
+  mobileConnectApiUrl?: string | null;
   storagePath: string;
   encrypt: (value: string) => Buffer;
   decrypt: (value: Buffer) => string;
@@ -243,11 +245,24 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
 
   constructor(options: CentralAuthManagerOptions) {
     super();
-    const fetcher = detectBlockingNetwork(options.fetch ?? fetch, options.apiUrl);
+    const apiUrl = options.apiUrl && !isOpenBotCloudUrl(options.apiUrl) ? options.apiUrl : null;
+    const mobileConnectApiUrl =
+      options.mobileConnectApiUrl === undefined
+        ? apiUrl
+        : options.mobileConnectApiUrl && !isOpenBotCloudUrl(options.mobileConnectApiUrl)
+          ? options.mobileConnectApiUrl
+          : null;
+    // No listener exists yet, so this does not emit. `initialize` publishes the same state.
+    if (!apiUrl) this.#state = { status: "signed_out" };
+    const baseFetch = options.fetch ?? fetch;
+    const fetcher = apiUrl
+      ? detectBlockingNetwork(baseFetch, apiUrl)
+      : () => Promise.reject(new Error(sourceText("error.auth.serviceUnavailable")));
     this.#transport = CentralAuthTransport.layer(fetcher);
     this.#options = {
       ...options,
-      mobileConnectApiUrl: options.mobileConnectApiUrl ?? options.apiUrl,
+      apiUrl,
+      mobileConnectApiUrl,
       canPersist: options.canPersist ?? (() => true),
       keyringChanged: options.keyringChanged ?? (() => false),
       fetch: fetcher,
@@ -353,8 +368,27 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     return structuredClone(this.#state.user);
   }
 
+  /** The account URL for one path. Null when this computer has no account host, or the host is OpenBot cloud. */
+  #accountUrl(path: string): URL | null {
+    const apiUrl = this.#options.apiUrl;
+    if (!apiUrl) return null;
+    try {
+      const url = new URL(path, apiUrl);
+      return isOpenBotCloudHostname(url.hostname) ? null : url;
+    } catch {
+      return null;
+    }
+  }
+
+  #resolvedAvatar(value: string | null): string | null {
+    if (!value) return null;
+    return this.#accountUrl(value)?.toString() ?? null;
+  }
+
   resolveApiUrl(path: string): string {
-    return new URL(path, this.#options.apiUrl).toString();
+    const url = this.#accountUrl(path);
+    if (!url) throw new Error(sourceText("error.auth.serviceUnavailable"));
+    return url.toString();
   }
 
   requestAuthorized<T>(
@@ -376,8 +410,13 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
         return yield* new CentralAuthOperationError({
           cause: new AuthApiError(401, "unauthorized", sourceText("error.auth.signInRequired")),
         });
+      const url = this.#accountUrl(path);
+      if (!url)
+        return yield* new CentralAuthOperationError({
+          cause: new Error(sourceText("error.auth.serviceUnavailable")),
+        });
       const response = yield* CentralAuthTransport.use((transport) =>
-        transport.fetch(new URL(path, this.#options.apiUrl), {
+        transport.fetch(url, {
           headers: { Authorization: `Bearer ${this.#sessionToken}` },
           signal: AbortSignal.timeout(timeoutMs),
         }),
@@ -420,6 +459,11 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       this: CentralAuthManager,
       host: MobileConnectHostBinding,
     ): Effect.fn.Return<MobileConnectTicket, CentralAuthOperationError, CentralAuthTransport> {
+      const apiUrl = this.#options.mobileConnectApiUrl;
+      if (!apiUrl)
+        return yield* new CentralAuthOperationError({
+          cause: new Error(sourceText("error.auth.serviceUnavailable")),
+        });
       const result = yield* this.#authorizedRequestEffect(
         "/v1/mobile-auth/ticket",
         {
@@ -435,7 +479,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
         });
       }
       return {
-        qrData: createMobileConnectUrl({ apiUrl: this.#options.mobileConnectApiUrl, ticket: result.ticket, host }),
+        qrData: createMobileConnectUrl({ apiUrl, ticket: result.ticket, host }),
         expiresAt: result.expiresAt,
       };
     },
@@ -465,6 +509,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     if (
       !stored ||
       !host ||
+      !this.#options.mobileConnectApiUrl ||
       this.#state.status !== "signed_in" ||
       stored.host.hostId !== host.hostId ||
       stored.host.fingerprint !== host.fingerprint
@@ -525,9 +570,11 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   ).bind(this);
 
   #mobileConnectLinkView(stored: StoredMobileConnectLink): MobileConnectLink {
+    const apiUrl = this.#options.mobileConnectApiUrl;
+    if (!apiUrl) throw new Error(sourceText("error.auth.serviceUnavailable"));
     return {
       url: createMobileConnectUrl({
-        apiUrl: this.#options.mobileConnectApiUrl,
+        apiUrl,
         ticket: stored.token,
         host: stored.host,
       }),
@@ -1158,8 +1205,13 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   readonly #fetchRemoteTicketJwks = Effect.fn("CentralAuth.fetchRemoteTicketJwks")(function* (
     this: CentralAuthManager,
   ): Effect.fn.Return<z.infer<typeof remoteTicketJwksSchema>, CentralAuthOperationError, CentralAuthTransport> {
+    const url = this.#accountUrl("/.well-known/jwks.json");
+    if (!url)
+      return yield* new CentralAuthOperationError({
+        cause: new Error(sourceText("error.auth.serviceUnavailable")),
+      });
     const response = yield* CentralAuthTransport.use((transport) =>
-      transport.fetch(new URL("/.well-known/jwks.json", this.#options.apiUrl), {
+      transport.fetch(url, {
         signal: AbortSignal.timeout(10_000),
       }),
     );
@@ -1276,7 +1328,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       );
       return members.map((member) => ({
         ...member,
-        avatarUrl: member.avatarUrl ? this.resolveApiUrl(member.avatarUrl) : null,
+        avatarUrl: this.#resolvedAvatar(member.avatarUrl),
       }));
     },
     (operation) => this.#owned(operation),
@@ -1393,7 +1445,11 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
         return yield* new CentralAuthOperationError({
           cause: new AuthApiError(401, "unauthorized", sourceText("error.auth.signInRequired")),
         });
-      const url = new URL(`/v2/remote/hosts/${encodeURIComponent(hostId)}/logo`, this.#options.apiUrl);
+      const url = this.#accountUrl(`/v2/remote/hosts/${encodeURIComponent(hostId)}/logo`);
+      if (!url)
+        return yield* new CentralAuthOperationError({
+          cause: new Error(sourceText("error.auth.serviceUnavailable")),
+        });
       url.searchParams.set("v", version);
       const response = yield* CentralAuthTransport.use((transport) =>
         transport.fetch(url, {
@@ -1536,7 +1592,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   readonly #unavailableRetryEffect = Effect.fn("CentralAuth.unavailableRetry")(function* (
     this: CentralAuthManager,
   ): Effect.fn.Return<void, CentralAuthOperationError, CentralAuthTransport> {
-    if (this.#disposed || this.#initialization || !this.#isUnavailable()) return;
+    if (!this.#options.apiUrl || this.#disposed || this.#initialization || !this.#isUnavailable()) return;
     const sessionToken = this.#sessionToken;
     const timeoutMs = this.#options.startupRequestTimeoutMs;
     const request: Effect.Effect<unknown, CentralAuthOperationError, CentralAuthTransport> = sessionToken
@@ -1562,6 +1618,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   readonly #initialize = Effect.fn("CentralAuth.initialize")(function* (
     this: CentralAuthManager,
   ): Effect.fn.Return<CentralAuthState, CentralAuthOperationError, CentralAuthTransport> {
+    if (!this.#options.apiUrl) return this.#setState({ status: "signed_out" });
     this.#setState({ status: "loading" });
     let keyringChanged = false;
     // A session that cannot be read now stays on disk: a Keychain that is locked or asks for
@@ -2270,8 +2327,13 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     decoder: (value: unknown) => T,
     timeoutMs = 10_000,
   ): Effect.fn.Return<T, CentralAuthOperationError, CentralAuthTransport> {
+    const url = this.#accountUrl(path);
+    if (!url)
+      return yield* new CentralAuthOperationError({
+        cause: new Error(sourceText("error.auth.serviceUnavailable")),
+      });
     const response = yield* CentralAuthTransport.use((transport) =>
-      transport.fetch(new URL(path, this.#options.apiUrl), {
+      transport.fetch(url, {
         ...init,
         signal: AbortSignal.timeout(timeoutMs),
       }),
@@ -2389,7 +2451,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   #resolveUserAvatar(user: CentralAuthUser): CentralAuthUser {
     return {
       ...user,
-      avatarUrl: user.avatarUrl ? new URL(user.avatarUrl, this.#options.apiUrl).toString() : null,
+      avatarUrl: this.#resolvedAvatar(user.avatarUrl),
     };
   }
 
@@ -2556,19 +2618,39 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   }
 }
 
-export function readCentralAuthApiUrl(value: string | undefined, fallback = "http://127.0.0.1:3100"): string {
-  const url = new URL(value ?? fallback);
-  const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost";
-  if ((url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) || url.pathname !== "/") {
-    throw new Error("OPENBOT_AUTH_API_URL must be HTTPS or an HTTP loopback origin.");
+function readAccountServiceOrigin(value: string, message: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(message);
+  }
+  const httpOnLocalNetwork = url.protocol === "http:" && isLocalNetworkHostname(url.hostname);
+  if (
+    isOpenBotCloudHostname(url.hostname) ||
+    (url.protocol !== "https:" && !httpOnLocalNetwork) ||
+    url.pathname !== "/"
+  ) {
+    throw new Error(message);
   }
   return url.origin;
 }
 
-export function readMobileConnectApiUrl(value: string | undefined, fallback: string): string {
-  const apiUrl = value ?? fallback;
-  createMobileConnectUrl({ apiUrl, ticket: "x".repeat(32) });
-  return new URL(apiUrl).origin;
+/** The account origin, or null when the variable is unset. An OpenBot cloud host throws. */
+export function readCentralAuthApiUrl(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return readAccountServiceOrigin(trimmed, "OPENBOT_AUTH_API_URL must be HTTPS or an HTTP local-network origin.");
+}
+
+/** The Mobile Connect origin. An unset variable uses `fallback`. An OpenBot cloud host throws. */
+export function readMobileConnectApiUrl(value: string | undefined, fallback: string | null): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return fallback;
+  return readAccountServiceOrigin(
+    trimmed,
+    "OPENBOT_MOBILE_AUTH_API_URL must be HTTPS or an HTTP local-network origin.",
+  );
 }
 
 /**

@@ -1,4 +1,5 @@
 import { type AgentTemplateDetail, decodeAgentTemplateDetail } from "@openbot/contracts/ipc";
+import { isLocalOpenBotServiceUrl, isOpenBotCloudHostname } from "@openbot/contracts/local-network";
 import { fetch } from "@/features/support/model/logged-fetch";
 import { currentText } from "@/shared/lib/text";
 
@@ -23,7 +24,12 @@ export async function loadAgentTemplate(
   if (signal?.aborted) controller.abort();
   const timeout = setTimeout(abort, AGENT_TEMPLATE_REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetch(new URL(`/v1/agent-templates/${encodeURIComponent(templateId)}`, apiUrl).toString(), {
+    if (!isLocalOpenBotServiceUrl(apiUrl)) throw new Error(currentText().t("mobile.link.template.error.loadFailed"));
+    const target = new URL(`/v1/agent-templates/${encodeURIComponent(templateId)}`, apiUrl);
+    if (isOpenBotCloudHostname(target.hostname)) {
+      throw new Error(currentText().t("mobile.link.template.error.loadFailed"));
+    }
+    const response = await fetch(target.toString(), {
       signal: controller.signal,
     });
     if (response.status === 404) throw new AgentTemplateNotFoundError();

@@ -1,8 +1,6 @@
 import { agentTemplateIdFromWebAppSearch, WEB_APP_AGENT_TEMPLATE_PARAM } from "@openbot/contracts/agent-template-links";
-import { companySignInErrorKey, WEB_APP_COMPANY_SIGN_IN_ERROR_PARAM } from "@openbot/contracts/company-sign-in";
-import { type FirstTouch, readFirstTouch } from "@openbot/contracts/first-touch";
 import { inviteUrlFromWebAppSearch, WEB_APP_INVITE_FIELDS } from "@openbot/contracts/invite-links";
-import { type AppVariant, type CentralAuthState, type CentralAuthUser, isAvatarColor } from "@openbot/contracts/ipc";
+import { type CentralAuthUser, isAvatarColor } from "@openbot/contracts/ipc";
 import {
   type MarketplaceListingLink,
   marketplaceListingFromWebAppSearch,
@@ -12,34 +10,19 @@ import {
 import { pluginSlugFromWebAppSearch, WEB_APP_PLUGIN_PARAM } from "@openbot/contracts/plugin-links";
 import { isBoolean, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { formatLocale, resolveLocale } from "@openbot/i18n";
-import { sourceText } from "@openbot/i18n/source";
 import { markRemoteSync } from "@openbot/team-client/sync-profile";
 import { classifyFailure } from "@openbot/telemetry";
 import { NotificationObserver, Toaster, toast } from "@openbot/ui";
-import { AccountLogin } from "@openbot/ui/features/account/AccountLogin";
 import { AppLoadingScreen } from "@openbot/ui/features/account/AppLoadingScreen";
 import { currentText } from "@openbot/ui/text";
 import { Dynamic } from "@solidjs/web";
 import { createEffect, createSignal, createStore, onSettled, Show } from "solid-js";
 import type { DesktopAnalyticsProperties } from "../../analytics";
-import {
-  configureWebReports,
-  reportNotification,
-  setWebAccountPending,
-  setWebReportsEnabled,
-  webAccountPending,
-  webKeepsOff,
-  webReportsAgreed,
-  webReportsEnabled,
-} from "../../error-reports";
+import { configureWebReports, reportNotification } from "../../error-reports";
 import { StaticI18nProvider } from "../../i18n-context";
-import { AnalyticsConsentRow, ConsentNotice } from "../onboarding/AnalyticsConsent";
-import { createOnboardingTeam, onboardingSessionSeed } from "../onboarding/onboarding-avatars";
 import { deleteRemoteWorkspaceFrames } from "../servers/remote-workspace-frame";
-import { WebLanguageStep } from "./WebLanguageStep";
-import { phoneAppScreenWanted, WebPhoneAppScreen } from "./WebPhoneAppScreen";
+import { pageUsesOpenBotCloud, requestTargetsOpenBotCloud } from "./cloud-page";
 import type { WebWorkspace } from "./WebWorkspace";
-import { createWebAccountCalls } from "./web-account";
 import { deleteSavedAgentPictures } from "./web-agent-pictures";
 import { createWebAppearancePreference } from "./web-appearance-preference";
 import { takeWebAppStart, WEB_APP_BILLING_PARAM, type WebAppStart } from "./web-billing";
@@ -51,9 +34,8 @@ import { createWebLanguagePreference } from "./web-language-preference";
 export { loadSavedLanguage } from "./web-language-preference";
 
 /**
- * The workspace is its own chunk, so the sign-in screen does not wait for it. Each session check
- * starts it beside the session request; a signed-in account waits for both. A failed import is
- * tried again on the next check.
+ * The workspace is its own chunk. Each session check starts it beside the session request.
+ * A failed import is tried again on the next check.
  */
 let workspaceImport: Promise<typeof WebWorkspace> | null = null;
 function loadWorkspace(): Promise<typeof WebWorkspace> {
@@ -66,31 +48,13 @@ function loadWorkspace(): Promise<typeof WebWorkspace> {
   return workspaceImport;
 }
 
-/** A sign-in refusal that the login form already shows. */
-class SignInIssueShown extends Error {}
-
-/** The email signs in with the company's provider, not with an email code. */
-class CompanySignInRequired extends Error {}
-
-/**
- * The error code of a company sign-in that came back without a session, from
- * `/app?companySignInError=<code>`. The query is removed after it is read.
- */
-function takeCompanySignInError(): string | null {
-  const url = new URL(window.location.href);
-  const code = url.searchParams.get(WEB_APP_COMPANY_SIGN_IN_ERROR_PARAM);
-  if (code === null) return null;
-  url.searchParams.delete(WEB_APP_COMPANY_SIGN_IN_ERROR_PARAM);
-  window.history.replaceState(window.history.state, "", url);
-  return code;
-}
-
-/** The email start answered that the company's provider signs this email in. */
-const COMPANY_SIGN_IN = Symbol("company sign-in");
-
-function companySignInIssue(code: string) {
-  return { code, message: sourceText(companySignInErrorKey(code)) };
-}
+/** This browser, with no email and no cloud account. */
+const LOCAL_WEB_ACCOUNT: CentralAuthUser = {
+  id: "local",
+  email: "",
+  name: null,
+  avatarUrl: null,
+};
 
 /**
  * The shared agent a `/app?agent=<id>` link names. The query is removed after it is read, so a reload
@@ -174,13 +138,9 @@ export function WebApp(props: { createRuntime?: WebRuntimeFactory } = {}) {
   const [state, setState] = createStore<{
     account: CentralAuthUser | null;
     loaded: boolean;
-    login: CentralAuthState;
-    resendAt: number;
   }>({
     account: null,
     loaded: false,
-    login: { status: "signed_out" },
-    resendAt: 0,
   });
   createEffect(
     () => ({ account: state.account, loaded: state.loaded }),
@@ -198,19 +158,6 @@ export function WebApp(props: { createRuntime?: WebRuntimeFactory } = {}) {
         .catch(() => undefined);
     },
   );
-  // Kept here, not in the workspace, so each link waits through sign-in.
-  // Before a session check, so a signed-out browser gets the saved answer or its regional default.
-  // A browser that agreed once keeps its answer: the sign-in screen does not show the box again.
-  const [analyticsAgreed, setAnalyticsAgreed] = createSignal(webReportsAgreed());
-  const [analyticsChoice, setAnalyticsChoice] = createSignal(webReportsEnabled());
-  // Only a box that the user changed is a choice for the account; a regional default is not.
-  let analyticsTouched = false;
-  // After a sign-out, the sign-in screen starts again from the saved answer of this browser.
-  function resetAnalyticsBox() {
-    setAnalyticsAgreed(webReportsAgreed());
-    setAnalyticsChoice(webReportsEnabled());
-    analyticsTouched = false;
-  }
   const [agentTemplateId, setAgentTemplateId] = createSignal(takeAgentTemplateLink());
   const [inviteUrl, setInviteUrl] = createSignal(takeInviteLink());
   const [pluginSlug, setPluginSlug] = createSignal(takePluginLink());
@@ -224,22 +171,6 @@ export function WebApp(props: { createRuntime?: WebRuntimeFactory } = {}) {
   let billingReturnEvent: BillingReturn | null =
     initialBillingReturn ??
     (initialHostingReturn ? { outcome: initialHostingReturn.paid ? "completed" : "cancelled", kind: "plan" } : null);
-  /** Shown after the first session check, because its 401 resets the login state. */
-  let companySignInReturnError = takeCompanySignInError();
-  /**
-   * A link or a return in the address opens the web client directly. The address no longer holds
-   * it, so a phone screen in front of it would lose an invitation, and a return comes back from a
-   * flow that the user started in the browser.
-   */
-  const addressHadLink =
-    agentTemplateId() !== null ||
-    inviteUrl() !== null ||
-    pluginSlug() !== null ||
-    marketplaceListing() !== null ||
-    startLink() !== null ||
-    initialBillingReturn !== null ||
-    initialHostingReturn !== null ||
-    companySignInReturnError !== null;
   const [workspace, setWorkspace] = createSignal<typeof WebWorkspace>();
   /** Sets the account when the workspace code is ready to show it. */
   async function showAccount(account: CentralAuthUser) {
@@ -267,34 +198,32 @@ export function WebApp(props: { createRuntime?: WebRuntimeFactory } = {}) {
     sessionGeneration += 1;
     setState((draft) => {
       draft.account = null;
-      draft.login = { status: "signed_out" };
     });
-    resetAnalyticsBox();
+  }
+  /** Shows this computer. A cloud page never reads the account service first. */
+  async function showLocal(generation: number): Promise<void> {
+    const account = await showAccount(LOCAL_WEB_ACCOUNT);
+    if (disposed || generation !== sessionGeneration) return;
+    sessionEnded = true;
+    setState((draft) => {
+      draft.account = account;
+    });
   }
   const accountFetch: typeof fetch = async (input, init) => {
+    if (requestTargetsOpenBotCloud(input)) throw new TypeError("Failed to fetch");
     const generation = sessionGeneration;
     const response = await fetch(input, init);
-    if (
-      !disposed &&
-      generation === sessionGeneration &&
-      response.status === 401 &&
-      input !== "/api/browser/email/start" &&
-      input !== "/api/browser/email/verify" &&
-      input !== "/api/browser/company/start"
-    ) {
-      if (state.account) channel?.postMessage("session-changed");
-      clearSession();
+    if (!disposed && generation === sessionGeneration && response.status === 401) {
+      const signedIn = state.account !== null && state.account.id !== LOCAL_WEB_ACCOUNT.id;
+      if (signedIn) channel?.postMessage("session-changed");
+      if (state.account?.id !== LOCAL_WEB_ACCOUNT.id) {
+        clearSession();
+        void showLocal(sessionGeneration);
+      }
     }
     return response;
   };
-  const accountCalls = createWebAccountCalls(accountFetch, checkSession);
-  async function request(
-    path: string,
-    body?:
-      | { email: string }
-      | { challengeId: string | null; code: string; firstTouch?: FirstTouch }
-      | Record<string, never>,
-  ) {
+  async function request(path: string, body?: Record<string, never>) {
     const response = await accountFetch(`/api/browser/${path}`, {
       method: body ? "POST" : "GET",
       credentials: "same-origin",
@@ -304,31 +233,6 @@ export function WebApp(props: { createRuntime?: WebRuntimeFactory } = {}) {
     });
     const value = await response.json();
     if (!response.ok) {
-      if (
-        path === "email/start" &&
-        isDynamicRecord(value) &&
-        isDynamicRecord(value.error) &&
-        value.error.code === "company_sign_in_required"
-      )
-        throw new CompanySignInRequired();
-      if (path === "email/start" || path === "email/verify") {
-        const retryAfterSeconds = Number.parseInt(response.headers.get("Retry-After") ?? "", 10);
-        const issue = {
-          code:
-            isDynamicRecord(value) && isDynamicRecord(value.error) && isString(value.error.code)
-              ? value.error.code
-              : "sign_in_failed",
-          message:
-            isDynamicRecord(value) && isDynamicRecord(value.error) && isString(value.error.message)
-              ? value.error.message
-              : text.t("webClient.login.failed"),
-          ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
-        };
-        setState((draft) => {
-          draft.login = draft.login.status === "code_sent" ? { ...draft.login, issue } : { status: "error", issue };
-        });
-        throw new SignInIssueShown();
-      }
       throw new Error(
         isDynamicRecord(value) && isDynamicRecord(value.error) && isString(value.error.message)
           ? value.error.message
@@ -336,15 +240,6 @@ export function WebApp(props: { createRuntime?: WebRuntimeFactory } = {}) {
       );
     }
     return value;
-  }
-  /** Like the desktop login, a server refusal is shown as the login issue, not also as a thrown error. */
-  async function signInRequest(path: "email/start" | "email/verify", body: Parameters<typeof request>[1]) {
-    try {
-      return await request(path, body);
-    } catch (error) {
-      if (error instanceof SignInIssueShown) return null;
-      throw error;
-    }
   }
   function accountFrom(value: unknown): CentralAuthUser {
     if (
@@ -363,24 +258,15 @@ export function WebApp(props: { createRuntime?: WebRuntimeFactory } = {}) {
       chatColor: isAvatarColor(value.user.chatColor) ? value.user.chatColor : null,
     };
   }
-  /**
-   * Keeps this browser and the account on the user's latest analytics answer. A choice that the
-   * account does not have yet goes to it; otherwise this browser follows the account's answer. An
-   * "off" from before the account kept answers does not follow an "on".
-   */
-  async function followAccountAnalytics(answer: boolean | null | undefined) {
-    const module = await import("./web-analytics");
-    if (webAccountPending()) return module.sendWebAnalyticsChoice(accountCalls);
-    if (answer === null || answer === undefined || answer === webReportsEnabled()) return;
-    if (answer && webKeepsOff()) return;
-    setWebReportsEnabled(answer);
-    module.followWebReportsPreference();
-  }
   async function checkSession() {
     const generation = sessionGeneration;
     // The workspace code loads beside the session check, not after it.
     void loadWorkspace().catch(() => undefined);
     try {
+      if (pageUsesOpenBotCloud()) {
+        await showLocal(generation);
+        return;
+      }
       const session = await request("session");
       markRemoteSync("session");
       const account = await showAccount(accountFrom(session));
@@ -390,123 +276,30 @@ export function WebApp(props: { createRuntime?: WebRuntimeFactory } = {}) {
         setState((draft) => {
           draft.account = account;
         });
-        void followAccountAnalytics(account.analyticsEnabled).catch(() => undefined);
       }
     } catch (error) {
       if (!disposed && generation === sessionGeneration) {
-        // Signed in, the workspace stays usable. Signed out, the login screen offers a retry, as on desktop.
-        if (state.account)
+        // A real session that fails stays up and reports the failure. No session uses this computer.
+        if (state.account && state.account.id !== LOCAL_WEB_ACCOUNT.id)
           toast.error(
             text.sourceText(error instanceof Error ? error.message : text.t("webClient.login.sessionFailed")),
             { report: { operation: "other", source: "system", cause_code: classifyFailure(error) } },
           );
-        else
-          setState((draft) => {
-            draft.login = {
-              status: "error",
-              issue: { code: "auth_api_unavailable", message: sourceText("error.auth.serviceUnavailable") },
-            };
-          });
+        else await showLocal(generation);
       }
     } finally {
-      const returnError = companySignInReturnError;
-      companySignInReturnError = null;
       if (!disposed)
         setState((draft) => {
           draft.loaded = true;
-          if (returnError !== null && !draft.account && draft.login.status === "signed_out")
-            draft.login = { status: "error", issue: companySignInIssue(returnError) };
         });
     }
   }
-  async function start(email: string) {
-    if (Date.now() < state.resendAt) throw new Error(text.t("webClient.login.wait"));
-    // A request for a code answers the analytics box and accepts the Terms of Service.
-    if (!analyticsAgreed()) {
-      setWebReportsEnabled(analyticsChoice());
-      if (analyticsTouched) setWebAccountPending(analyticsChoice());
-      import("./web-analytics").then((module) => module.followWebReportsPreference()).catch(() => undefined);
-    }
-    const value = await signInRequest("email/start", { email }).catch((error: unknown) => {
-      if (error instanceof CompanySignInRequired) return COMPANY_SIGN_IN;
-      throw error;
-    });
-    if (value === COMPANY_SIGN_IN) return openCompanySignIn(email);
-    if (value === null) return;
-    if (!isDynamicRecord(value) || !isString(value.challengeId) || typeof value.resendAt !== "number")
-      throw new Error(text.t("webClient.login.responseInvalid"));
-    const challengeId = value.challengeId;
-    const resendAt = value.resendAt;
-    setState((draft) => {
-      draft.resendAt = resendAt;
-      draft.login = {
-        status: "code_sent",
-        challengeId,
-        email,
-        expiresAt: typeof value.expiresAt === "number" ? value.expiresAt : Date.now() + 600000,
-        resendAvailableAt: resendAt,
-        ...(isString(value.developmentCode) ? { developmentCode: value.developmentCode } : {}),
-      };
-    });
-  }
-  /**
-   * Goes to the company's sign-in page in this tab. The account service sends the browser back to
-   * `/app` with the session cookie, or with `companySignInError`.
-   */
-  async function openCompanySignIn(email: string) {
-    setState((draft) => {
-      draft.login = { status: "company_sign_in", email };
-    });
-    const response = await accountFetch("/api/browser/company/start", {
-      method: "POST",
-      credentials: "same-origin",
-      cache: "no-store",
-      headers: { "Content-Type": "application/json", "X-OpenBot-Browser": "1" },
-      body: JSON.stringify({ email }),
-    });
-    const value = await response.json().catch(() => null);
-    if (response.ok && isDynamicRecord(value) && isString(value.authorizationUrl)) {
-      window.location.assign(value.authorizationUrl);
-      return;
-    }
-    const code =
-      isDynamicRecord(value) && isDynamicRecord(value.error) && isString(value.error.code)
-        ? value.error.code
-        : "company_sign_in_failed";
-    setState((draft) => {
-      draft.login = { status: "company_sign_in", email, issue: companySignInIssue(code) };
-    });
-  }
-  async function verify(challengeId: string, code: string) {
-    // The first website visit of this browser, so that reports can name the source of a new account.
-    const firstTouch = readFirstTouch(() => window.localStorage, Date.now());
-    const value = await signInRequest("email/verify", { challengeId, code, ...(firstTouch ? { firstTouch } : {}) });
-    if (value === null) return;
-    const account = accountFrom(value);
-    sessionGeneration += 1;
-    sessionEnded = false;
-    channel?.postMessage("session-changed");
-    try {
-      await showAccount(account);
-    } catch {
-      // The server has used the code and set the session, so the retry checks the session again.
-      setState((draft) => {
-        draft.login = {
-          status: "error",
-          issue: { code: "auth_api_unavailable", message: sourceText("error.auth.serviceUnavailable") },
-        };
-      });
-      return;
-    }
-    setState((draft) => {
-      draft.account = account;
-    });
-    void followAccountAnalytics(account.analyticsEnabled).catch(() => undefined);
-  }
   async function logout() {
+    if (!state.account || state.account.id === LOCAL_WEB_ACCOUNT.id || pageUsesOpenBotCloud()) return;
     await request("logout", {});
     clearSession();
     channel?.postMessage("session-changed");
+    await showLocal(sessionGeneration);
   }
   onSettled(() => {
     channel = new BroadcastChannel("openbot.web.session");
@@ -529,14 +322,9 @@ export function WebApp(props: { createRuntime?: WebRuntimeFactory } = {}) {
       window.removeEventListener("pageshow", restore);
     };
   });
-  const variant: AppVariant = import.meta.env.DEV ? "dev" : "production";
-  const consentAgents = createOnboardingTeam(onboardingSessionSeed(), 3);
   const languagePreference = createWebLanguagePreference();
   const appearancePreference = createWebAppearancePreference();
   // The sign-in starts in the browser language; its language button opens the wheel to change it.
-  const [languageWheelOpen, setLanguageWheelOpen] = createSignal(false);
-  // On a phone the web client first points to the phone app, unless the address opened a link.
-  const [phoneAppShown, setPhoneAppShown] = createSignal(!addressHadLink && phoneAppScreenWanted());
   return (
     <StaticI18nProvider
       locale={resolveLocale(languagePreference.language(), navigator.language)}
@@ -545,67 +333,8 @@ export function WebApp(props: { createRuntime?: WebRuntimeFactory } = {}) {
       <NotificationObserver onShown={reportNotification}>
         <div class="web-app">
           <Toaster onToastShown={reportNotification} />
-          <Show when={state.loaded && phoneAppShown()}>
-            <WebPhoneAppScreen variant={variant} onContinue={() => setPhoneAppShown(false)} />
-          </Show>
-          <Show when={state.loaded && !phoneAppShown()}>
-            <Show
-              keyed
-              when={state.account?.id}
-              fallback={
-                <Show
-                  when={!languageWheelOpen()}
-                  fallback={
-                    <WebLanguageStep
-                      variant={variant}
-                      language={languagePreference.language()}
-                      onChangeLanguage={languagePreference.setLanguage}
-                      onDone={() => setLanguageWheelOpen(false)}
-                    />
-                  }
-                >
-                  <AccountLogin
-                    variant={variant}
-                    language={resolveLocale(languagePreference.language(), navigator.language)}
-                    onChangeLanguage={() => setLanguageWheelOpen(true)}
-                    state={state.login}
-                    onRetry={checkSession}
-                    onRequestEmailCode={start}
-                    onVerifyEmailCode={verify}
-                    onOpenCompanySignIn={() =>
-                      state.login.status === "company_sign_in"
-                        ? openCompanySignIn(state.login.email)
-                        : Promise.resolve()
-                    }
-                    onReset={async () => {
-                      clearSession();
-                      setState((draft) => {
-                        draft.resendAt = 0;
-                      });
-                    }}
-                    consent={
-                      <Show when={!analyticsAgreed()}>
-                        <AnalyticsConsentRow
-                          class="web-consent-row"
-                          checked={analyticsChoice()}
-                          agents={consentAgents}
-                          onChange={(checked) => {
-                            analyticsTouched = true;
-                            setAnalyticsChoice(checked);
-                          }}
-                        />
-                      </Show>
-                    }
-                    notice={
-                      <ConsentNotice
-                        onOpenTerms={() => window.open("/terms", "_blank", "noopener")}
-                        onOpenPrivacy={() => window.open("/privacy", "_blank", "noopener")}
-                      />
-                    }
-                  />
-                </Show>
-              }
-            >
+          <Show when={state.loaded}>
+            <Show keyed when={state.account?.id}>
               {(accountId) => (
                 <Dynamic
                   component={workspace()}

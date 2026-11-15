@@ -9,14 +9,15 @@ const key = "openbot.mobile.chatOrder.v1";
  * or to the other devices. The default is the desktop default.
  */
 export const useChatOrderPreference = create<{ order: MobileChatOrder; ready: boolean }>(() => ({
-  order: "unread-group",
+  order: "recent",
   ready: false,
 }));
 
 export async function loadChatOrderPreference(): Promise<void> {
   if (useChatOrderPreference.getState().ready) return;
   try {
-    const stored = await SecureStore.getItemAsync(key);
+    const stored =
+      (await SecureStore.getItemAsync(key)) ?? (await SecureStore.getItemAsync("openbot.mobile.chat-list-order.v1"));
     const order = MOBILE_CHAT_ORDERS.find((candidate) => candidate === stored);
     // A second startup read must not overwrite a change made in the menu.
     if (order && !useChatOrderPreference.getState().ready) useChatOrderPreference.setState({ order });

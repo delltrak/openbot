@@ -7,6 +7,7 @@ import {
   type McpTestResult,
   relayableSignInLink,
 } from "@openbot/contracts/ipc";
+import { isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import type { TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
 import { SIGN_IN_RELAY_CAPABILITY, SIGN_IN_RELAY_ROUTES } from "@openbot/contracts/team-protocol/sign-in-relay-v1";
 import { sourceText } from "@openbot/i18n/source";
@@ -24,6 +25,7 @@ export function openHttpLink(url: string, openExternal: (url: string) => Promise
   const parsed = new URL(url);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
     throw new Error(sourceText("error.app.externalLinkProtocol"));
+  if (isOpenBotCloudUrl(parsed.toString())) return Promise.resolve();
   return openExternal(parsed.toString());
 }
 

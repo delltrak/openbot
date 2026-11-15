@@ -31,6 +31,7 @@ import { shortcutsSupported } from "@/features/shortcuts/shortcuts-native";
 import { useMobileWorkspaceSelector } from "@/features/workspace/context/mobile-workspace-context";
 import { ProfileAvatar } from "@/shared/components/profile-avatar";
 import { haptics } from "@/shared/lib/haptics";
+import { localImageUrl } from "@/shared/lib/local-network";
 import { refreshMobileFeatures, useMobileFeature } from "@/shared/lib/mobile-features";
 import { useText } from "@/shared/lib/text";
 
@@ -75,12 +76,11 @@ export function SettingsScreen() {
       <SettingsSection>
         <SettingsRow
           onPress={() => router.push("/settings/profile")}
-          supportingText={session?.user.email}
           leading={
             <ProfileAvatar
               neutral
               name={displayName}
-              imageUrl={session?.user.avatarUrl ? new URL(session.user.avatarUrl, session.apiUrl).toString() : null}
+              imageUrl={localImageUrl(session?.user.avatarUrl, session?.apiUrl)}
               size={40}
             />
           }

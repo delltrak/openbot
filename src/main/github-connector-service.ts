@@ -82,8 +82,8 @@ export interface GitHubConnectorServiceOptions {
    * and the token file that the git credential helper reads, while the connection is active.
    */
   toolDirectory: string;
-  /** The OpenBot API, which gives the installation tokens that make GitHub show the app as the author. */
-  apiUrl: string;
+  /** The account API that gives installation tokens. Null when this computer has no account host. */
+  apiUrl: string | null;
   openExternal: (url: string) => Promise<void>;
   fetch?: GitHubFetch;
   now?: () => number;

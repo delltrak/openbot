@@ -1,4 +1,5 @@
 import type { MessagingPlatform } from "@openbot/contracts/ipc";
+import { isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import { decodeSignalServerMessage } from "@openbot/contracts/signal-protocol/decode";
 import { type DiscordApiRequest, decodeDiscordApiError } from "@openbot/contracts/signal-protocol/discord-api";
 import { DISCORD_API_PATH } from "@openbot/contracts/signal-protocol/discord-route";
@@ -408,6 +409,9 @@ export class SignalIngress implements MessagingIngress {
     );
     if (!session) return yield* new MessagingAdapterError({ cause: new DiscordApiError(request.op, "unavailable") });
     const { token, url } = session;
+    if (isOpenBotCloudUrl(url)) {
+      return yield* new MessagingAdapterError({ cause: new DiscordApiError(request.op, "unavailable") });
+    }
     let body: string | FormData = JSON.stringify(request);
     if (file) {
       const form = new FormData();
@@ -581,6 +585,11 @@ export class SignalIngress implements MessagingIngress {
     this.#githubMissing = github && githubRoute === null;
     this.#telegramMissing = telegram && telegramRoute === null;
     if (telegram && telegramRoute !== null) this.#telegramBackoffMs = BACKOFF_START_MS;
+    if (isOpenBotCloudUrl(bootstrap.signalUrl)) {
+      logger.warn("The account ticket names an OpenBot cloud Signal host. This build does not open it.");
+      if (generation === this.#generation) this.#wait("unavailable");
+      return;
+    }
     this.#pendingLinkedRoutes = { slack: linkedRouteIds(slackRoute), telegram: linkedRouteIds(telegramRoute) };
     const socket = new WebSocket(bootstrap.signalUrl);
     this.#socket = socket;

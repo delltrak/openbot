@@ -663,6 +663,8 @@ export const messages = {
   "mobile.agent.home.sort.manual": "Вручную",
   "mobile.agent.home.sort.unreadGroup": "Непрочитанные в группе",
   "mobile.agent.home.sort.unreadFirst": "Непрочитанные первыми в папках",
+  "mobile.agent.home.orderRecent": "Недавние сообщения",
+  "mobile.agent.home.orderManual": "Мой порядок",
   "mobile.agent.route.appearance": "Внешний вид",
   "mobile.agent.route.cropPhoto": "Перемещение и масштаб",
   "mobile.agent.info.memory.inclusion.label": "Использование памяти",

@@ -611,6 +611,8 @@ export const messages = {
   "mobile.agent.home.sort.manual": "Handmatig",
   "mobile.agent.home.sort.unreadGroup": "Ongelezen in een groep",
   "mobile.agent.home.sort.unreadFirst": "Ongelezen eerst in mappen",
+  "mobile.agent.home.orderRecent": "Recente berichten",
+  "mobile.agent.home.orderManual": "Mijn volgorde",
   "mobile.agent.route.appearance": "Uiterlijk",
   "mobile.agent.route.cropPhoto": "Verplaats en schaal",
   "mobile.agent.info.memory.inclusion.label": "Geheugengebruik",

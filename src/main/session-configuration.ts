@@ -36,6 +36,7 @@ export function configureContentSecurityPolicy(): void {
     app.isPackaged,
     process.env.REMOTE_SIGNAL_URL,
     readSelfHostedSignalOrigin(process.env.OPENBOT_AUTH_API_URL, process.env.OPENBOT_REMOTE_SIGNAL_URL),
+    process.env.OPENBOT_AUTH_API_URL,
   );
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {

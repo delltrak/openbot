@@ -43,10 +43,11 @@ type MobileChatItem = Extract<MobileSidebarItem, { kind: "agent" | "channel" }>;
  * - `unread-first`: each section shows its unread chats first, then the others, both by last
  *   activity. Chats do not move in the list by drag in this order, because the order is not manual.
  */
-export type MobileChatOrder = "manual" | "unread-group" | "unread-first";
+export type MobileChatOrder = "recent" | "manual" | "unread-group" | "unread-first";
 
 export const MOBILE_CHAT_ORDERS = [
   "manual",
+  "recent",
   "unread-group",
   "unread-first",
 ] as const satisfies readonly MobileChatOrder[];
@@ -85,7 +86,7 @@ export function mobileSidebarItems(
   channels: ChannelSummary[],
   collapsedSectionIds: ReadonlySet<string> = new Set(),
   t: MobileTranslate = currentText().t,
-  order: { unreadFirst?: ReadonlySet<string> | null; aside?: ReadonlySet<string> | null } = {},
+  order: { unreadFirst?: ReadonlySet<string> | null; aside?: ReadonlySet<string> | null; recent?: boolean } = {},
 ): MobileSidebarItem[] {
   const { unreadFirst, aside } = order;
   const sorted = chatItems(layout, agents, channels);
@@ -94,7 +95,9 @@ export function mobileSidebarItems(
         ...byRecent(sorted.filter((chat) => unreadFirst.has(chat.id))),
         ...byRecent(sorted.filter((chat) => !unreadFirst.has(chat.id))),
       ]
-    : sorted;
+    : order.recent
+      ? byRecent(sorted)
+      : sorted;
   if (!layout) return aside ? chats.filter((chat) => !aside.has(chat.id)) : chats;
   const names = new Map(layout.sections.map((section) => [section.id, section.name]));
   const groups = new Map<string, MobileSidebarItem[]>();
@@ -143,11 +146,18 @@ export function mobileSidebarItems(
  * desktop, the group is not a section of the layout. The layout keeps each agent's place, so an
  * agent returns to its section when the wait ends.
  */
-export function mobileWaitingItems(layout: SidebarLayoutSnapshot | null, agents: MobileAgent[]): MobileSidebarItem[] {
+export function mobileWaitingItems(
+  layout: SidebarLayoutSnapshot | null,
+  agents: MobileAgent[],
+  order: MobileChatOrder = "manual",
+): MobileSidebarItem[] {
   if (agents.length === 0) return [];
   const positions = new Map(layout?.agentOrder.map((id, index) => [id, index]));
-  const sorted = [...agents].sort(
-    (a, b) => (positions.get(a.id) ?? positions.size) - (positions.get(b.id) ?? positions.size),
+  const sorted = [...agents].sort((a, b) =>
+    order === "recent"
+      ? chatActivity({ kind: "agent", id: b.id, agent: b }) - chatActivity({ kind: "agent", id: a.id, agent: a }) ||
+        a.id.localeCompare(b.id)
+      : (positions.get(a.id) ?? positions.size) - (positions.get(b.id) ?? positions.size),
   );
   return [
     { kind: "waiting", id: "needs-you", count: sorted.length },

@@ -327,7 +327,7 @@ import { createWebAccountUsage } from "./web-account-usage";
 import { createWebAgentImportCalls } from "./web-agent-import";
 import { createWebAgentThreads } from "./web-agent-threads";
 import { openWebLink } from "./web-attachments";
-import { createWebBillingCalls, createWebLicenseCalls, type WebAppStart } from "./web-billing";
+import type { WebAppStart } from "./web-billing";
 import { webBitwardenConnectorPort } from "./web-bitwarden-connector";
 import { createWebChannelsPort } from "./web-channels-runtime";
 import { createWebChatHistory, type WebChatHistoryEntry } from "./web-chat-history";
@@ -1408,17 +1408,15 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
   const [billingOpen, setBillingOpen] = createSignal(false);
   /** `/app?start=license` opens Billing with the license dialog open, and with the order of the pricing page. */
   const [licenseStart, setLicenseStart] = createSignal<{ order: PricingOrder | null } | null>(null);
-  const billingCalls = createWebBillingCalls(props.accountFetch);
-  const billing = createBillingStore(() => billingCalls, billingOpen);
-  const licenseCalls = createWebLicenseCalls(props.accountFetch);
-  const license = createLicenseStore(() => licenseCalls, billingOpen, trackLicenseEvent);
+  const billing = createBillingStore(() => undefined, billingOpen);
+  const license = createLicenseStore(() => undefined, billingOpen, trackLicenseEvent);
   // The web client has no Hosted servers settings, so a server whose plan ended is renewed or deleted in Billing.
   const billingHostedServers = createSettingsHostedServersStore(
     {
       get open() {
         return billingOpen();
       },
-      hostedServersApi: hostedServers.calls,
+      hostedServersApi: undefined,
     },
     billingOpen,
   );
@@ -1490,8 +1488,8 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
   async function restartHost(): Promise<void> {
     const hostId = restartRequest()?.hostId;
     if (!hostId) return;
-    if (hostedServers.isHosted(hostId)) await hostedServers.calls.restart(hostId);
-    else await runTeamEffect(requestHostRestart(hostRequest(hostId)).pipe(Effect.mapError((error) => error.cause)));
+    if (hostedServers.isHosted(hostId)) return;
+    await runTeamEffect(requestHostRestart(hostRequest(hostId)).pipe(Effect.mapError((error) => error.cause)));
   }
   createEffect(
     () => props.billingReturn,
@@ -3347,7 +3345,6 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
                     servers={servers()}
                     onRefreshServers={workspace.retryHosts}
                     resume={hostedServers.addServer()?.resume}
-                    license={licenseCalls}
                     onOpenUrl={(url) => window.open(url, "_blank", "noopener")}
                     onClose={hostedServers.closeAddServer}
                     onOpenServer={(serverId) => {
@@ -3426,7 +3423,6 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
                         onSetPublished={unavailable}
                         onRotateHostKey={rotateHostKeyAction()}
                         onCreateInvite={serverSettings.createInvite}
-                        license={licenseCalls}
                         // Company sign-in setup waits for a loopback listener, so only the desktop app has it.
                         onDownloadDesktopApp={() => void window.open("/download", "_blank", "noopener")}
                         onContactUs={() => window.location.assign(HOSTED_SERVER_CONTACT_URL)}

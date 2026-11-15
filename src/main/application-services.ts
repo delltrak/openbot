@@ -41,18 +41,13 @@ import {
 } from "./browser-profile-service";
 import { feedbackFacts, feedbackSender } from "./feedback";
 import { HostReleaseService, readInstallationMode } from "./host-release-service";
-import {
-  CONTAINER_UPDATE_PATHS,
-  CONTAINER_UPDATE_TRIGGER,
-  HOSTED_UPDATE_TRIGGER,
-  HostedUpdateAdapter,
-} from "./hosted-update-adapter";
 import { LicenseDesktopService } from "./license-service";
 import { LocalSignInWindows } from "./local-sign-in-window";
 import { localSkillLearner } from "./local-skill-learner";
 import { LocalSkillLibrary } from "./local-skill-library";
 import { localSkillTools } from "./local-skill-tools";
 import { MAC_PERMISSION_URLS } from "./mac-permission-urls";
+import { openExternal } from "./open-external";
 import { PushNotificationStore } from "./push-notification-store";
 import { DESKTOP_USE_MS } from "./push-notifications";
 import { RemoteWorkflowError, toRemoteWorkflowError } from "./remote-service-effects";
@@ -114,6 +109,7 @@ import {
   latestTurnAnswer,
 } from "@openbot/contracts/ipc";
 import { decodeRecord, requiredString } from "@openbot/contracts/ipc-decoding";
+import { isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
 import { localeDirection } from "@openbot/i18n";
 import { sourceText } from "@openbot/i18n/source";
@@ -431,16 +427,7 @@ import { THEME_PALETTE_DIRECTORY } from "./theme-palette-files";
 import { TraceFile } from "./trace-file";
 import { readUpdatePreference, UPDATE_PREFERENCE_FILE, writeUpdatePreference } from "./update-preference-store";
 import { checkRestartReadiness, type RestartReadiness } from "./update-readiness";
-import {
-  createDisabledUpdateAdapter,
-  electronUpdaterCacheDirectory,
-  isNixStoreInstall,
-  isValidSemver,
-  loadElectronUpdater,
-  supportsInstalledUpdates,
-  type UpdateAdapter,
-  UpdateService,
-} from "./update-service";
+import { createDisabledUpdateAdapter, UpdateService } from "./update-service";
 import { listSiblingOpenBotInstances } from "./update-sibling-instances";
 import { VaultService } from "./vault-service";
 import { VaultStore } from "./vault-store";
@@ -1114,7 +1101,7 @@ export async function createApplicationServices({
   const externalLinks = new ExternalLinkOpener({
     preference: externalLinkPreference,
     platform: process.platform,
-    openDefault: (url) => shell.openExternal(url),
+    openDefault: (url) => openExternal(url),
     // The user clicked the link in the focused window, which can be a chat window.
     onFallback: (fallback) =>
       sendToRenderer(
@@ -1242,10 +1229,7 @@ export async function createApplicationServices({
       }),
   });
   teardown.push(TEARDOWN_ORDER.agentDock, "the agent dock", () => agentDock.destroy());
-  const centralAuthApiUrl = readCentralAuthApiUrl(
-    process.env.OPENBOT_AUTH_API_URL,
-    app.isPackaged ? "https://api.openbot.run" : "http://127.0.0.1:3100",
-  );
+  const centralAuthApiUrl = readCentralAuthApiUrl(process.env.OPENBOT_AUTH_API_URL);
   const centralAuth = new CentralAuthManager({
     apiUrl: centralAuthApiUrl,
     mobileConnectApiUrl: readMobileConnectApiUrl(process.env.OPENBOT_MOBILE_AUTH_API_URL, centralAuthApiUrl),
@@ -1253,11 +1237,11 @@ export async function createApplicationServices({
     ...safeStorageCipher("error.app.macSecureStorageUnavailable"),
     keyringChanged: () => secretStorage().madeKeyFile(),
     // The system browser, where the user is signed in to the company. The language loads below.
-    companySignInBrowser: { open: (url) => shell.openExternal(url), language: () => language },
+    companySignInBrowser: { open: (url) => openExternal(url), language: () => language },
     confirmSessionAtStart: hostedServer !== null && hostedServer !== undefined,
   });
-  // Registered before `initialize()`, which publishes `{ status: "loading" }` synchronously: the
-  // listener therefore runs on the next line with most of this function's services still unbuilt.
+  // Registered before `initialize()`, which publishes the first account state on the next line,
+  // while most of this function's services are still unbuilt.
   teardown.push(TEARDOWN_ORDER.centralAuth, "the account runtime", () => Effect.runPromise(centralAuth.dispose()));
   centralAuth.on("changed", forwardCentralAuth);
   const centralAuthInitialization = Effect.runSync(Effect.cached(centralAuth.initialize().pipe(toRemoteWorkflowError)));
@@ -3676,7 +3660,7 @@ export async function createApplicationServices({
         try: async () => {
           if (action === "reveal") shell.showItemInFolder(appPath);
           else {
-            await shell.openExternal(MAC_PERMISSION_URLS[action]);
+            await openExternal(MAC_PERMISSION_URLS[action]);
             await computerUsePermissionHelp.show(action, appPath);
           }
         },
@@ -3747,7 +3731,7 @@ export async function createApplicationServices({
     throw new Error(`Unsupported analytics platform: ${analyticsPlatform}`);
   }
   performance.mark("openbot:services.remote-desktop");
-  const analyticsEnabled = (app.isPackaged && appVariant === "production") || analyticsCaptureUrl !== null;
+  const analyticsEnabled = analyticsCaptureUrl !== null && !isOpenBotCloudUrl(analyticsCaptureUrl);
   const analyticsInstallId = analyticsEnabled
     ? await Effect.runPromise(
         readAnalyticsInstallId(join(app.getPath("userData"), ANALYTICS_INSTALL_ID_FILE), Date.now()),
@@ -3909,7 +3893,7 @@ export async function createApplicationServices({
     },
     {
       allowLocalDevelopmentInvites: developmentRemoteRole !== null,
-      selfHostedApiOrigin: selfHostedApiOrigin(centralAuthApiUrl),
+      selfHostedApiOrigin: selfHostedApiOrigin(centralAuthApiUrl ?? undefined),
       appVersion: app.getVersion(),
       connectTrace,
       // The owner's levels on this computer's server, which the host also reads for the owner's phones.
@@ -4246,60 +4230,13 @@ export async function createApplicationServices({
   const voiceServer = new VoiceServerService({ preferences: voiceServerPreferences, apiKeys: voiceServerKeys });
   voiceServer.on("settings", forwardVoiceServerSettings);
   const currentVersion = app.getVersion();
-  // Skip the file check in dev: unpacked runs never enable updates, so avoid touching resourcesPath.
-  const updateMetadataAvailable = app.isPackaged && existsSync(join(process.resourcesPath, "app-update.yml"));
-  // A hosted or self-installed server runs a release that root owns. Root installs updates for it
-  // when openbot-hosted-update has installed its request units. A container of openbot-instance asks
-  // the host instead, which pulls the image. Other containers have neither. The mode file names the
-  // whole computer, so a desktop AppImage beside a self-installed server keeps its own updater.
-  const containerInstaller =
-    app.isPackaged &&
-    process.platform === "linux" &&
-    installationMode === "container" &&
-    existsSync(CONTAINER_UPDATE_TRIGGER);
-  const hostedInstaller =
-    containerInstaller ||
-    (app.isPackaged &&
-      process.platform === "linux" &&
-      (process.env.OPENBOT_HOSTED_SERVER === "1" || (serverModeEnvironment !== null && installationMode === "self")) &&
-      existsSync(HOSTED_UPDATE_TRIGGER));
-  // A local server is the same application as its parent, which installs the update for both.
-  const updatesEnabled =
-    !localServerChild &&
-    app.isPackaged &&
-    !isNixStoreInstall() &&
-    (hostedInstaller || (supportsInstalledUpdates(process.platform) && updateMetadataAvailable)) &&
-    isValidSemver(currentVersion);
-  if (app.isPackaged && updateMetadataAvailable && !isValidSemver(currentVersion)) {
-    logger.warn(`OpenBot updates are disabled because the application version is not valid SemVer: ${currentVersion}`);
-  }
-  let updateAdapter: UpdateAdapter = createDisabledUpdateAdapter();
-  let updaterEnabled = updatesEnabled;
-  let updaterCacheDirectory: string | undefined;
-  if (updatesEnabled && hostedInstaller) {
-    updateAdapter = new HostedUpdateAdapter({
-      currentVersion,
-      arch: process.arch,
-      ...(containerInstaller ? { paths: CONTAINER_UPDATE_PATHS } : {}),
-    });
-  } else if (updatesEnabled) {
-    const realAdapter = await loadElectronUpdater();
-    if (realAdapter) {
-      updateAdapter = realAdapter;
-      updaterCacheDirectory = electronUpdaterCacheDirectory();
-    } else {
-      updaterEnabled = false;
-    }
-  }
-  const updater = new UpdateService(updateAdapter, {
+  // Updates stay off. electron-updater and the hosted release helper would contact GitHub.
+  const updater = new UpdateService(createDisabledUpdateAdapter(), {
     currentVersion,
-    enabled: updaterEnabled,
-    autoDownload: updatePreference.autoDownload,
+    enabled: false,
+    autoDownload: false,
     beforeInstall: prepareForUpdateInstall,
-    // Packaged runs share one application bundle across macOS users. Installing while another
-    // login session runs OpenBot from that bundle would replace it underneath that session, so
-    // the service refuses the install until every sibling session stopped. Unpackaged runs never
-    // enable updates, so there is nothing to guard there.
+    // The service does not install. The sibling list stays for that status.
     ...(app.isPackaged
       ? {
           checkSiblingInstances: () =>
@@ -4331,7 +4268,6 @@ export async function createApplicationServices({
           appBundlePath: join(app.getPath("exe"), "..", "..", ".."),
         }
       : {}),
-    updaterCacheDirectory,
   });
   teardown.push(TEARDOWN_ORDER.updater, "the update service", () => Effect.runPromise(updater.stop()));
   const agentInitialization = new AgentInitializationGate((rosterLoaded) =>

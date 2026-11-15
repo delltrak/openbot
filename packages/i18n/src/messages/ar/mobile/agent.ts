@@ -672,6 +672,8 @@ export const messages = {
   "mobile.agent.home.sort.manual": "يدوي",
   "mobile.agent.home.sort.unreadGroup": "غير المقروءة في مجموعة",
   "mobile.agent.home.sort.unreadFirst": "غير المقروءة أولًا في المجلدات",
+  "mobile.agent.home.orderRecent": "الرسائل الأخيرة",
+  "mobile.agent.home.orderManual": "ترتيبي",
   "mobile.agent.route.appearance": "المظهر",
   "mobile.agent.route.cropPhoto": "نقل وتغيير الحجم",
   "mobile.agent.info.memory.inclusion.label": "استخدام الذكرى",

@@ -64,6 +64,7 @@ import { type MenuAction, type MenuComponentRef, MenuView } from "@/shared/compo
 import { ProfileAvatar } from "@/shared/components/profile-avatar";
 import { devFeatureOverride } from "@/shared/lib/dev-feature-overrides";
 import { haptics } from "@/shared/lib/haptics";
+import { localImageUrl } from "@/shared/lib/local-network";
 import { refreshMobileFeatures, useMobileFeature } from "@/shared/lib/mobile-features";
 import { useReducedMotion } from "@/shared/lib/motion";
 import { isAndroid, longPressDelay } from "@/shared/lib/platform";
@@ -179,7 +180,7 @@ export const ServerDrawerContent = memo(function ServerDrawerContent({
   // does not open it there, because the row takes the long press.
   const menus = useRef(new Map<string, MenuComponentRef | null>());
   const displayName = mobileUserName(session.user);
-  const avatarUrl = session.user.avatarUrl ? new URL(session.user.avatarUrl, session.apiUrl).toString() : null;
+  const avatarUrl = localImageUrl(session.user.avatarUrl, session.apiUrl);
   const mutedColor = String(muted);
   const [editing, setEditing] = useState(false);
   const [editingTools, setEditingTools] = useState(false);
@@ -568,9 +569,6 @@ export const ServerDrawerContent = memo(function ServerDrawerContent({
           <View className="min-w-0 flex-1">
             <Typography.Paragraph className="font-semibold" numberOfLines={1} style={typeScale.preview}>
               {displayName}
-            </Typography.Paragraph>
-            <Typography.Paragraph className="text-text-secondary" numberOfLines={1} selectable style={typeScale.small}>
-              {session.user.email}
             </Typography.Paragraph>
           </View>
         </View>

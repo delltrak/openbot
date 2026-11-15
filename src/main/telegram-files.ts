@@ -3,6 +3,7 @@
 // logs a token or a file.
 
 import { open, readFile, rm } from "node:fs/promises";
+import { isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import {
   TELEGRAM_FILE_BYTES_LIMIT,
@@ -25,7 +26,7 @@ function failure(errorCode: number, description: string): MessagingAdapterError 
   return new MessagingAdapterError({ cause: new TelegramCallError(errorCode, description, null) });
 }
 
-/** The HTTPS origin of a Signal socket URL: `wss://signal.openbot.run/v1/signal` gives `https://signal.openbot.run`. */
+/** The HTTP origin of a Signal socket URL. `wss:` becomes `https:`, and `ws:` becomes `http:`. */
 export function signalHttpOrigin(signalUrl: string): string {
   const url = new URL(signalUrl);
   url.protocol = url.protocol === "ws:" ? "http:" : "https:";
@@ -39,6 +40,7 @@ export const downloadTelegramFile = Effect.fnUntraced(function* (
   destination: string,
   maxBytes: number,
 ) {
+  if (isOpenBotCloudUrl(origin)) return yield* failure(503, "file_unavailable");
   const limit = Math.min(maxBytes, TELEGRAM_FILE_BYTES_LIMIT);
   const response = yield* filesIo((signal) =>
     fetch(`${origin}${TELEGRAM_FILES_PATH}/${encodeURIComponent(fileToken)}`, { signal, redirect: "error" }),
@@ -74,6 +76,7 @@ export const downloadTelegramFile = Effect.fnUntraced(function* (
 
 /** Posts the bytes of one file for a `sendDocument` token, and returns the message ID. */
 export const uploadTelegramFile = Effect.fnUntraced(function* (origin: string, uploadToken: string, path: string) {
+  if (isOpenBotCloudUrl(origin)) return yield* failure(503, "file_unavailable");
   const bytes = yield* filesIo(() => readFile(path));
   if (bytes.byteLength === 0 || bytes.byteLength > TELEGRAM_FILE_BYTES_LIMIT)
     return yield* failure(413, "file_too_large");

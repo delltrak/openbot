@@ -1,6 +1,7 @@
 // The installation tokens of the OpenBot GitHub App that the OpenBot API gives this computer, so
 // that GitHub shows an agent's work as the app and not as the signed-in user.
 
+import { isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import { createOpenBotLogger, registerSecretValue, toLogValue } from "@openbot/logging";
 import { Effect } from "effect";
 import { z } from "zod";
@@ -33,8 +34,8 @@ export interface GitHubBotToken {
 }
 
 export interface GitHubBotTokensOptions {
-  /** The origin of the OpenBot API, such as `https://api.openbot.run`. */
-  apiUrl: string;
+  /** The account origin that gives installation tokens. Null when this computer has no account host. */
+  apiUrl: string | null;
   fetch: GitHubFetch;
   now: () => number;
 }
@@ -48,7 +49,7 @@ export interface GitHubBotTokensOptions {
  * reached, agents keep working as the user.
  */
 export class GitHubBotTokens {
-  readonly #apiUrl: string;
+  readonly #apiUrl: string | null;
   readonly #fetch: GitHubFetch;
   readonly #now: () => number;
   /** `owner/name` in lower case, as GitHub compares it. */
@@ -81,6 +82,7 @@ export class GitHubBotTokens {
 
   /** Whether a request is due: a token is near its end, or the last failure was long enough ago. */
   due(): boolean {
+    if (!this.#apiUrl || isOpenBotCloudUrl(this.#apiUrl)) return false;
     return this.#now() >= this.#nextAt;
   }
 
@@ -106,11 +108,13 @@ export class GitHubBotTokens {
     userToken: string,
     signal?: AbortSignal,
   ): Effect.fn.Return<boolean, GitHubOperationError> {
+    const apiUrl = this.#apiUrl;
+    if (!apiUrl || isOpenBotCloudUrl(apiUrl)) return false;
     const epoch = this.#epoch;
     let refused = false;
     yield* Effect.gen({ self: this }, function* () {
       const response = yield* githubCall((fiberSignal) =>
-        this.#fetch(new URL("/v1/github/installation-tokens", this.#apiUrl).toString(), {
+        this.#fetch(new URL("/v1/github/installation-tokens", apiUrl).toString(), {
           method: "POST",
           headers: { Authorization: `Bearer ${userToken}`, Accept: "application/json" },
           signal: signal

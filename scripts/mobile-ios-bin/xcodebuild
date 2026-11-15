@@ -3,10 +3,18 @@
 # `-derivedDataPath`, so Xcode would write the build to ~/Library/Developer/Xcode/DerivedData in a
 # folder named after the worktree path, which stays there after the worktree is removed. Expo reads
 # the app path from CONFIGURATION_BUILD_DIR in the build output, so the build can be in the worktree.
+# Expo omits -allowProvisioningUpdates when every target already has a development team.
+# Xcode then cannot create the missing device profile.
+seen_derived=0
+seen_updates=0
 for arg in "$@"; do
-  if [ "$arg" = "-derivedDataPath" ]; then exec /usr/bin/xcodebuild "$@"; fi
+  if [ "$arg" = "-derivedDataPath" ]; then seen_derived=1; fi
+  if [ "$arg" = "-allowProvisioningUpdates" ]; then seen_updates=1; fi
 done
-if [ -n "$OPENBOT_XCODE_DERIVED_DATA" ]; then
-  exec /usr/bin/xcodebuild -derivedDataPath "$OPENBOT_XCODE_DERIVED_DATA" "$@"
+if [ "$seen_updates" -eq 0 ]; then
+  set -- "$@" -allowProvisioningUpdates -allowProvisioningDeviceRegistration
+fi
+if [ "$seen_derived" -eq 0 ] && [ -n "$OPENBOT_XCODE_DERIVED_DATA" ]; then
+  set -- -derivedDataPath "$OPENBOT_XCODE_DERIVED_DATA" "$@"
 fi
 exec /usr/bin/xcodebuild "$@"

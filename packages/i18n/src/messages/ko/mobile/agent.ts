@@ -596,6 +596,8 @@ export const messages = {
   "mobile.agent.home.sort.manual": "수동",
   "mobile.agent.home.sort.unreadGroup": "읽지 않음을 그룹으로",
   "mobile.agent.home.sort.unreadFirst": "폴더에서 읽지 않음 먼저",
+  "mobile.agent.home.orderRecent": "최근 메시지",
+  "mobile.agent.home.orderManual": "내 순서",
   "mobile.agent.route.appearance": "외형",
   "mobile.agent.route.cropPhoto": "이동 및 크기 조절",
   "mobile.agent.info.memory.inclusion.label": "메모리 사용",

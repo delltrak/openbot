@@ -52,19 +52,8 @@ import {
 } from "./model/live-activity-link";
 import { LiveActivitySync } from "./model/live-activity-sync";
 
-/**
- * How long content stays current after the app leaves the foreground. A host that sends updates
- * moves the date on with each one. Without them, the content then looks out of date.
- */
-const STALE_AFTER_BACKGROUND_MS = 5 * 60 * 1000;
 /** Streaming replies change the island many times a second. iOS throttles faster updates anyway. */
 const PUBLISH_DELAY_MS = 1000;
-/**
- * In the background a timer can outlive the app, so changes publish at once. A streamed reply still
- * changes many times a second, and iOS has an update budget. So in one mode, the background
- * publishes at most once in this time.
- */
-const BACKGROUND_PUBLISH_INTERVAL_MS = 1000;
 /** Pictures drawn between two pauses, so a long agent list does not stop the interface. */
 const BLOUBS_PER_PAUSE = 4;
 /** The longest delay that `setTimeout` keeps. A longer one runs at once. */
@@ -86,11 +75,9 @@ interface LiveActivityInput {
 }
 
 /**
- * Shows the desktop Dynamic Island state as an iOS Live Activity. The desktop island logic reads the
- * same team events, so both show the same event for the same state. Returns the handler for those
- * events. The phone updates the activity while it runs. iOS then suspends it and its connections,
- * so the phone gives the active host the push token of the activity, and that host updates it
- * through Apple with content sealed for this phone.
+ * Shows a working agent in the iOS Live Activity while this app is open. The desktop island logic
+ * reads the same team events. Returns the handler for those events. Leaving the app ends the
+ * activity. This development build has no Apple push, so the host does not update it in the background.
  */
 export function useLiveActivity({
   servers,
@@ -135,9 +122,6 @@ export function useLiveActivity({
   hiddenRef.current = hidden;
   const foregroundRef = useRef(foreground);
   foregroundRef.current = foreground;
-  /** Set once when the app leaves the foreground. A new date for each update would make every update differ. */
-  const staleDate = useRef<Date | undefined>(undefined);
-  const lastPublish = useRef<{ mode: string | null; at: number }>({ mode: null, at: 0 });
   // The connection checks itself when the app returns, and a dead one reports it in the next render.
   // An answer waits for that render, so it is not sent on a connection that only looks online.
   const [resumed, setResumed] = useState(foreground);
@@ -238,90 +222,75 @@ export function useLiveActivity({
     [drawBloub],
   );
 
-  /** The `force` skips the background interval, for the stale date that the app must send before iOS suspends it. */
-  const publish = useCallback(
-    (force = false) => {
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = null;
-      if (!live || !received.current || disposed.current) return;
-      const preference = useLiveActivitiesPreference.getState();
-      // Wait for the stored choice, so a user who turned them off sees no activity at launch.
-      if (!preference.ready) return;
-      if (!preference.enabled) {
-        void syncFor(live.native).show(null);
-        return;
-      }
-      // The same for a server that the user muted. Its load publishes again.
-      const hiddenServers = hiddenRef.current;
-      if (!hiddenServers) return;
-      // The buttons need the keys. Their load publishes again.
-      const phoneSecret = secretRef.current;
-      if (!phoneSecret) return;
-      const shownOrder = serverOrder.current.filter((serverId) => !hiddenServers.has(serverId));
-      const presentation = live.coordinator.presentation(shownOrder);
-      const { unreadAgentIds, unreadCounts } = liveState.get();
-      const unread = new Set(unreadAgentIds);
-      const servers = new Set(shownOrder);
-      const props = liveActivityView(presentation, {
-        t: currentText().t,
-        agentColor: avatarHeadColor,
-        avatar,
-        unreadAgents: agentsRef.current
-          // An agent with its notifications off is not in the island, so it is not in the list.
-          .filter(
-            (agent) =>
-              unread.has(agent.id) &&
-              servers.has(agent.serverId) &&
-              !live.coordinator.mutedAgentIds(agent.serverId).has(agent.id),
-          )
-          .map((agent) => ({
-            id: agent.id,
-            serverId: agent.serverId,
-            name: agent.name,
-            avatarSeed: agent.avatarSeed,
-            avatarHue: agent.avatarHue,
-            avatarUrl: agent.avatarUrl ?? null,
-            count: Math.max(1, unreadCounts[agent.id] ?? 1),
-          })),
-        // Only the host that the buttons answer can sign them too.
-        actionKey: liveActivityHostKeys(phoneSecret, presentation.serverId).keys.action,
-        // A question, an approval or the work of a side thread opens that thread.
-        threadId: live.coordinator.requestThreadId(presentation) ?? workingThread(),
-        redact: redactText,
-      });
-      if (avatars.current.size !== keptAvatars.current) keepAvatars();
-      const mode = props?.mode ?? null;
-      const wait = lastPublish.current.at + BACKGROUND_PUBLISH_INTERVAL_MS - Date.now();
-      // A change of mode, such as the end of a turn, is the update that matters most. It never waits.
-      if (!force && !foregroundRef.current && mode === lastPublish.current.mode && wait > 0) {
-        timer.current = setTimeout(() => publish(), wait);
-        return;
-      }
-      lastPublish.current = { mode, at: Date.now() };
-      void syncFor(live.native).show(
-        props && fitLiveActivityProps(props),
-        foregroundRef.current ? undefined : staleDate.current,
-      );
+  const publish = useCallback(() => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    if (!live || disposed.current) return;
+    // This build has no Apple push. The island stays only while the app is open.
+    if (!foregroundRef.current) {
+      void syncFor(live.native).show(null);
+      return;
+    }
+    if (!received.current) return;
+    const preference = useLiveActivitiesPreference.getState();
+    // Wait for the stored choice, so a user who turned them off sees no activity at launch.
+    if (!preference.ready) return;
+    if (!preference.enabled) {
+      void syncFor(live.native).show(null);
+      return;
+    }
+    // The same for a server that the user muted. Its load publishes again.
+    const hiddenServers = hiddenRef.current;
+    if (!hiddenServers) return;
+    // The buttons need the keys. Their load publishes again.
+    const phoneSecret = secretRef.current;
+    if (!phoneSecret) return;
+    const shownOrder = serverOrder.current.filter((serverId) => !hiddenServers.has(serverId));
+    const presentation = live.coordinator.presentation(shownOrder);
+    const { unreadAgentIds, unreadCounts } = liveState.get();
+    const unread = new Set(unreadAgentIds);
+    const servers = new Set(shownOrder);
+    const props = liveActivityView(presentation, {
+      t: currentText().t,
+      agentColor: avatarHeadColor,
+      avatar,
+      unreadAgents: agentsRef.current
+        // An agent with its notifications off is not in the island, so it is not in the list.
+        .filter(
+          (agent) =>
+            unread.has(agent.id) &&
+            servers.has(agent.serverId) &&
+            !live.coordinator.mutedAgentIds(agent.serverId).has(agent.id),
+        )
+        .map((agent) => ({
+          id: agent.id,
+          serverId: agent.serverId,
+          name: agent.name,
+          avatarSeed: agent.avatarSeed,
+          avatarHue: agent.avatarHue,
+          avatarUrl: agent.avatarUrl ?? null,
+          count: Math.max(1, unreadCounts[agent.id] ?? 1),
+        })),
+      // Only the host that the buttons answer can sign them too.
+      actionKey: liveActivityHostKeys(phoneSecret, presentation.serverId).keys.action,
+      redact: redactText,
+    });
+    if (avatars.current.size !== keptAvatars.current) keepAvatars();
+    const fitted = props?.mode === "working" ? fitLiveActivityProps(props) : null;
+    void syncFor(live.native).show(fitted);
 
-      function workingThread(): string | null {
-        const working = live?.coordinator.workingTurn(presentation);
-        return working ? sideThreadOfTurnRef.current(presentation.serverId, working.agentId, working.turnId) : null;
-      }
-
-      function avatar(serverId: string, agent: DynamicIslandAgentIdentity, mood: LiveActivityMood): string {
-        if (!live) return "";
-        // The app avatar without a photo is the plush. Its picture is drawn once for each face.
-        if (!agent.avatarUrl) return bloubFile(agent, mood);
-        const name = photoName(serverId, agent.id, agent.avatarUrl);
-        const saved = avatars.current.get(name);
-        if (saved) return saved;
-        if (saved === undefined) loadPhotoRef.current(serverId, agent.id, agent.avatarUrl);
-        // As in the app, the plush shows while the photo loads, or when it cannot load.
-        return bloubFile(agent, mood);
-      }
-    },
-    [live, liveState, syncFor, bloubFile, keepAvatars],
-  );
+    function avatar(serverId: string, agent: DynamicIslandAgentIdentity, mood: LiveActivityMood): string {
+      if (!live) return "";
+      // The app avatar without a photo is the plush. Its picture is drawn once for each face.
+      if (!agent.avatarUrl) return bloubFile(agent, mood);
+      const name = photoName(serverId, agent.id, agent.avatarUrl);
+      const saved = avatars.current.get(name);
+      if (saved) return saved;
+      if (saved === undefined) loadPhotoRef.current(serverId, agent.id, agent.avatarUrl);
+      // As in the app, the plush shows while the photo loads, or when it cannot load.
+      return bloubFile(agent, mood);
+    }
+  }, [live, liveState, syncFor, bloubFile, keepAvatars]);
   publishRef.current = () => {
     if (!foregroundRef.current) publish();
     else timer.current ??= setTimeout(publish, PUBLISH_DELAY_MS);
@@ -547,12 +516,10 @@ export function useLiveActivity({
     };
   }, [serverIds, publish]);
 
-  // The app can be suspended at any moment after it leaves the foreground: publish the stale date now.
+  // Leaving the screen ends the island. Coming back shows it again when an agent is working.
   useEffect(() => {
-    staleDate.current = foreground ? undefined : new Date(Date.now() + STALE_AFTER_BACKGROUND_MS);
-    // The host could update or end the activity while the app was away. Show the app state again.
     if (foreground) sync.current?.forget();
-    publish(!foreground);
+    publish();
   }, [foreground, publish]);
 
   // The active host gets the push token while the app runs, and a flag when the app goes away.

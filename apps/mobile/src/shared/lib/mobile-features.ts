@@ -1,3 +1,4 @@
+import { isLocalOpenBotServiceUrl } from "@openbot/contracts/local-network";
 import {
   MOBILE_FEATURES_PATH,
   type MobileFeatureFlags,
@@ -39,6 +40,10 @@ const useMobileFeatures = create<{
 
 export async function refreshMobileFeatures(apiUrl: string, force = false): Promise<MobileFeatureFlags> {
   const current = useMobileFeatures.getState();
+  if (!isLocalOpenBotServiceUrl(apiUrl)) {
+    useMobileFeatures.setState({ apiUrl, flags: mobileFeaturesOff(), latestVersion: null, checkedAt: Date.now() });
+    return mobileFeaturesOff();
+  }
   if (current.apiUrl !== apiUrl) {
     useMobileFeatures.setState({ apiUrl, flags: mobileFeaturesOff(), latestVersion: null, checkedAt: 0 });
   } else if (!force && Date.now() - current.checkedAt < FLAGS_TTL_MS) {

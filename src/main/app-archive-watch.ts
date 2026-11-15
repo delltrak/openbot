@@ -12,8 +12,9 @@ import { promisify } from "node:util";
 import type { AppTranslate } from "@openbot/i18n";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { Option, Schema } from "effect";
-import { dialog, shell } from "electron";
+import { dialog } from "electron";
 import { DOWNLOAD_URL } from "./download-url";
+import { openExternal } from "./open-external";
 
 const logger = createOpenBotLogger("app-archive");
 // A copy of the archive writes for some seconds. Check once the writes stop.
@@ -81,7 +82,7 @@ async function showArchiveChanged(translate: AppTranslate): Promise<void> {
     defaultId: 0,
     cancelId: 1,
   });
-  if (response === 0) await shell.openExternal(DOWNLOAD_URL);
+  if (response === 0) await openExternal(DOWNLOAD_URL);
 }
 
 /**

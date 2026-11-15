@@ -148,6 +148,7 @@ import {
 import { ensureMacApplicationPresence, secondLaunchResponse } from "./main-window-state";
 import { MessageLinkRelay, openHttpLink } from "./message-link-relay";
 import { recoverFromNewerDatabase } from "./newer-database-recovery";
+import { openExternal } from "./open-external";
 import { flushMainLog, startMainLog } from "./provider-log";
 import { notifyRemoteControlStarted } from "./remote-control-question";
 import { watchRemoteHostDirectory } from "./remote-server-host-directory";
@@ -937,7 +938,7 @@ function registerIpcHandlers({
     ...browserDockIpcHandlers({ browserDock }),
     ...computerUseIpcHandlers({
       cuaDriver,
-      openExternal: (url) => shell.openExternal(url),
+      openExternal: (url) => openExternal(url),
       permissionHelp: computerUsePermissionHelp,
     }),
     ...macAutomationIpcHandlers({ platform: process.platform }),
@@ -1021,7 +1022,7 @@ function registerIpcHandlers({
       notificationPreference,
       translate: language.translate,
       requestPermission: () => requestDesktopNotificationPermission(notificationPreference, language.translate),
-      openExternal: (url) => shell.openExternal(url),
+      openExternal: (url) => openExternal(url),
     }),
     ...teamIpcHandlers({
       host,
@@ -1994,7 +1995,7 @@ if (!hasSingleInstanceLock) {
         // The services, and with them the saved language, may not exist yet. Then the system language applies.
         const locale = services?.language.locale ?? resolveLocale("system", app.getLocale());
         const translate = services?.language.translate ?? translateFor(locale);
-        // A newer OpenBot migrated the data: install that release instead of a dead-end error (#4969).
+        // A newer OpenBot migrated the data. This copy shows the download dialog (#4969).
         if (error instanceof NewerDatabaseError) {
           recoverFromNewerDatabase({
             window: windowHolder.current,

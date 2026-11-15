@@ -9,6 +9,7 @@ import {
   type ExternalLinkPreference,
   externalLinkAppName,
 } from "@openbot/contracts/ipc";
+import { isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { Effect, Result, Schema } from "effect";
@@ -60,6 +61,10 @@ export class ExternalLinkOpener {
 
   readonly open = Effect.fn("ExternalLinkOpener.open")(function* (this: ExternalLinkOpener, url: string) {
     const { preference, platform, openDefault, onFallback } = this.#dependencies;
+    if (isOpenBotCloudUrl(url)) {
+      logger.warn("Refused a page on an OpenBot cloud host.");
+      return;
+    }
     const target = preference.get().target;
     const page = webPage(url);
     if (target.kind === "app" && page) {

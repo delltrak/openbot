@@ -15,6 +15,7 @@ import {
   type UsageTokens,
   WORKFLOW_RUN_SOURCES,
 } from "@openbot/contracts/ipc";
+import { isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import { isBoolean, isDynamicRecord, isFunction, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
 import { normalizeEmailAddress } from "@openbot/contracts/validation";
 import {
@@ -44,7 +45,6 @@ import { localDay, RESOURCE_ENUMS, RESOURCE_PROPERTY_NAMES, type ResourcePropert
 import { UNCLEAN_EXIT_ENUMS, type UncleanExitProperties } from "./run-marker";
 import { SERVICE_STEP_PROPERTY_NAMES, SERVICE_STEPS, START_KINDS, type StartupProperties } from "./startup-timing";
 
-const OPENPANEL_API_URL = "https://analytics.openbot.run/api";
 const OPENPANEL_CLIENT_ID = "6c989975-87ef-4f0c-857e-ab449a65b5c2";
 // Node fetch sends no Origin, and OpenPanel answers 401 to a client with no allowed origin or
 // secret. The SDK drops a 401 in silence. Send the renderer's origin, which the project allows.
@@ -243,7 +243,7 @@ function createOpenPanelClient(options: OpenPanelOptions): HostOpenPanelClient {
 export interface HostAnalyticsOptions {
   reports?: ReportQueue;
   enabled: boolean;
-  /** The OpenPanel API. Production when omitted; a dev capture server in `analytics-redaction-e2e`. */
+  /** A local capture server, as in `analytics-redaction-e2e`. Omitted or a cloud URL: nothing is sent. */
   apiUrl?: string;
   /** True when the user shares analytics with their account. Off: events go with `installId`. */
   trackingEnabled?: boolean;
@@ -530,12 +530,12 @@ export class HostAnalytics {
     this.#uncleanExit = options.uncleanExit ?? null;
     this.#trackingEnabled = options.trackingEnabled ?? true;
     this.#install = options.installId ? { id: options.installId, email: null } : null;
-    if (!options.enabled) {
+    if (!options.enabled || !options.apiUrl || isOpenBotCloudUrl(options.apiUrl)) {
       this.#client = null;
       return;
     }
     try {
-      const client = createClient({ apiUrl: options.apiUrl ?? OPENPANEL_API_URL, clientId: OPENPANEL_CLIENT_ID });
+      const client = createClient({ apiUrl: options.apiUrl, clientId: OPENPANEL_CLIENT_ID });
       client.setGlobalProperties({
         surface: "desktop_host",
         environment: "production",

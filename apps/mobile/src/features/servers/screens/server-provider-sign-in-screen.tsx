@@ -1,4 +1,5 @@
 import { type AgentProviderId, isAgentProvider, relayCallbackQuery } from "@openbot/contracts/ipc";
+import { isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import * as Clipboard from "expo-clipboard";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { Spinner, Typography } from "heroui-native";
@@ -174,6 +175,12 @@ export function ServerProviderSignInScreen() {
             void admin.cancelRelay(relayFlow).then(applyStatus, () => undefined);
             return;
           }
+          if (isOpenBotCloudUrl(page.url)) {
+            setSignIn(null);
+            setError(currentText().t("mobile.server.providers.openFailed"));
+            void admin.cancelRelay(relayFlow).then(applyStatus, () => undefined);
+            return;
+          }
           setSignIn({ kind: "relay", flowId: relayFlow, page });
           // The user asked for the sign-in with Connect, so a page that finishes by itself opens
           // without a second tap. A page whose address the user brings back opens only after the
@@ -288,7 +295,13 @@ export function ServerProviderSignInScreen() {
           address={address}
           onCode={setCode}
           onAddress={setAddress}
-          onOpen={(url) => void Linking.openURL(url).catch(() => setError(t("mobile.server.providers.openFailed")))}
+          onOpen={(url) => {
+            if (isOpenBotCloudUrl(url)) {
+              setError(t("mobile.server.providers.openFailed"));
+              return;
+            }
+            void Linking.openURL(url).catch(() => setError(t("mobile.server.providers.openFailed")));
+          }}
           onCopy={(value) =>
             void Clipboard.setStringAsync(value).then(
               () => haptics.notification("success"),

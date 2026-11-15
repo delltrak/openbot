@@ -593,6 +593,8 @@ export const messages = defineMessages("mobile.agent", {
   "mobile.agent.home.sort.manual": "Manual",
   "mobile.agent.home.sort.unreadGroup": "Unread in a group",
   "mobile.agent.home.sort.unreadFirst": "Unread first in folders",
+  "mobile.agent.home.orderRecent": "Recent messages",
+  "mobile.agent.home.orderManual": "My order",
   "mobile.agent.route.appearance": "Appearance",
   "mobile.agent.route.cropPhoto": "Move and Scale",
   "mobile.agent.info.memory.inclusion.label": "Memory use",

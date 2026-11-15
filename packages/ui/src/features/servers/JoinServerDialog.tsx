@@ -395,10 +395,12 @@ export function InvitePreviewCard(props: InvitePreviewCardProps) {
               : formatInviteDate(props.preview.expiresAt, t, format)}
           </dd>
         </div>
-        <div>
-          <dt>{t("server.join.account")}</dt>
-          <dd>{props.accountEmail}</dd>
-        </div>
+        <Show when={props.accountEmail}>
+          <div>
+            <dt>{t("server.join.account")}</dt>
+            <dd>{props.accountEmail}</dd>
+          </div>
+        </Show>
       </dl>
       <Show when={props.preview.emailBound}>
         <p>{t("server.join.emailBound")}</p>

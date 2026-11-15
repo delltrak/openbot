@@ -317,19 +317,14 @@ const Servers = createSimpleContext({
         .then(setHostStatus)
         .catch(() => undefined);
       void refreshHostedServersAvailable();
-      // Another account can sign in after the start, so the plus button reads its access again.
+      // Sign-in and sign-out both keep hosted plans closed. Remove waits on `loaded`.
       let signedInUserId: string | null = null;
       const unsubscribeAuth = serversPort().auth.onEvent((state) => {
         if (state.status !== "signed_in" && state.status !== "signed_out") return;
         const userId = state.status === "signed_in" ? state.user.id : null;
         if (userId === signedInUserId) return;
         signedInUserId = userId;
-        if (userId) void refreshHostedServersAvailable();
-        else {
-          setHostedServersAvailable(false);
-          setHostedServerIds(new Set<string>());
-          setHostedServersLoaded(false);
-        }
+        void refreshHostedServersAvailable();
       });
       return () => {
         unsubscribeServers();
@@ -339,19 +334,14 @@ const Servers = createSimpleContext({
     });
 
     /**
-     * Reads again whether the account can create hosted servers, and which hosted servers it has. The
-     * account can change after the start.
+     * Hosted plans stay closed. The local create-server path does not wait on a cloud account.
      */
     async function refreshHostedServersAvailable(): Promise<boolean> {
-      // A failed read keeps the last answer: a network error does not turn the plans off.
-      const list = await serversPort()
-        .hostedServers.list()
-        .catch(() => null);
-      if (!list) return hostedServersAvailable();
-      setHostedServersAvailable(list.available);
-      setHostedServerIds(new Set(list.servers.map((server) => server.serverId)));
+      // Hosted servers belong to the cloud account. The local create-server path stays.
+      setHostedServersAvailable(false);
+      setHostedServerIds(new Set<string>());
       setHostedServersLoaded(true);
-      return list.available;
+      return false;
     }
 
     // Each time the user enters a server that has a new version, the update dialog opens. A selection

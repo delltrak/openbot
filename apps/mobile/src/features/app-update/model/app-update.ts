@@ -1,3 +1,4 @@
+import { isLocalOpenBotServiceUrl } from "@openbot/contracts/local-network";
 import {
   isNewerMobileVersion,
   MOBILE_CHANGELOG_PATH,
@@ -32,8 +33,6 @@ const ANDROID_STORE_URL = "market://details?id=run.openbot.mobile";
 // Google Play link, so it is the fallback for each of the two.
 const ANDROID_STORE_WEB_URL = "https://openbot.run/download/android";
 
-/** The public changelog, for when the notes cannot load. */
-export const MOBILE_CHANGELOG_URL = "https://openbot.run/changelog?platform=mobile";
 const NOTES_TIMEOUT_MS = 10_000;
 // The notes of a version do not change after the store has it.
 const NOTES_STALE_MS = 10 * 60_000;
@@ -187,7 +186,9 @@ export async function installAppUpdate(update: AppUpdate, reloadColor: string): 
 }
 
 async function fetchReleaseNotes(apiUrl: string, after: string | null, signal: AbortSignal) {
+  if (!isLocalOpenBotServiceUrl(apiUrl)) throw new Error("The release notes could not be read.");
   const url = new URL(MOBILE_CHANGELOG_PATH, apiUrl);
+  if (!isLocalOpenBotServiceUrl(url.origin)) throw new Error("The release notes could not be read.");
   url.searchParams.set("platform", isIOS ? "ios" : "android");
   if (after) url.searchParams.set("after", after);
   const controller = new AbortController();

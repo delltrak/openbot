@@ -1,3 +1,4 @@
+import type { CentralAuthUser } from "@openbot/contracts/ipc";
 import { AppLoadingScreen } from "@openbot/ui/features/account/AppLoadingScreen";
 import { useText } from "@openbot/ui/text";
 import { createEffect, createMemo, createSignal, Loading, Show } from "solid-js";
@@ -13,7 +14,16 @@ import { useSettings } from "./features/settings/settings-context";
 import { WhatsNewOverlay } from "./features/updates/WhatsNewOverlay";
 import { QuitShortcutHint } from "./features/window/QuitShortcutHint";
 import { useI18n } from "./i18n-context";
-import { AccountLogin, FirstRunFlow, InitialSetup, LanguageStep } from "./lazy-views";
+import { FirstRunFlow, InitialSetup, LanguageStep } from "./lazy-views";
+
+/** A person on this computer, with no email and no cloud account. */
+const LOCAL_ACCOUNT: CentralAuthUser = {
+  id: "local",
+  email: "",
+  name: null,
+  avatarUrl: null,
+};
+
 import { usePlatform } from "./platform";
 import { reportWorkspaceReady } from "./renderer-timing";
 import { WorkspaceShell } from "./WorkspaceShell";
@@ -37,9 +47,9 @@ function LoadingScreen() {
 
 /**
  * Which of four things the window shows: the startup splash until the build and
- * the saved setup are known, the sign-in screen (after the language wheel on a
- * computer that has not passed it), one of the two first-run flows, or the
- * workspace. The splash stays over the next screen until it fades out.
+ * the saved setup are known, the language wheel on a computer that has not
+ * passed it, one of the two first-run flows, or the workspace. The splash stays
+ * over the next screen until it fades out.
  *
  * The ladder is written as nested `<Show>` rather than pushed into the providers
  * as readiness gates. A gated provider withholds its subtree, and the only
@@ -79,16 +89,28 @@ export function AppAccessGate() {
   // On a start or a reload, the crew rain in once and hop out when the workspace is ready.
   const [workspaceReady, setWorkspaceReady] = createSignal(false);
   const workspaceShown = () =>
-    !!auth.visibleSignedInAccount() && (setup.setupState()?.completed === true || !scope.connection.hasContent);
+    gateAccount() !== null && (setup.setupState()?.completed === true || !scope.connection.hasContent);
   // While main loads the account, the splash cannot know if the workspace follows. It holds: a splash
   // that ended before the account came would rain again on the workspace's first load.
   const splashReady = () =>
     started() && auth.centralAuth().status !== "loading" && (!workspaceShown() || workspaceReady());
   const languageStep = createLanguageStep();
-  // Only a settled sign-out: a code in flight or a retry keeps the sign-in screen it belongs to.
-  // The language button reopens the wheel from an error too, so that state does not hide it.
+  // The language wheel shows on a settled sign-out, and again when its button reopens it.
   const languageStepShown = () =>
     !languageStep.done() && (languageStep.reopened() || auth.centralAuth().status === "signed_out");
+  /**
+   * The signed-in account, or this computer when there is none. The success hold stays empty so the
+   * splash does not swap in the local account for those 600ms. The language wheel comes first.
+   */
+  const gateAccount = createMemo((): CentralAuthUser | null => {
+    if (languageStepShown()) return null;
+    const state = auth.centralAuth();
+    if (state.status === "loading") return null;
+    const visible = auth.visibleSignedInAccount();
+    if (visible) return visible;
+    if (state.status === "signed_in") return null;
+    return LOCAL_ACCOUNT;
+  });
   // A computer signed in before the wheel existed has its language already, so a later sign-out skips the wheel.
   createEffect(
     () => auth.centralAuth().status === "signed_in",
@@ -109,25 +131,10 @@ export function AppAccessGate() {
     <>
       <Show when={started()}>
         <Show
-          when={auth.visibleSignedInAccount()}
+          when={gateAccount()}
           fallback={
             <Loading fallback={<LoadingScreen />}>
-              <Show
-                when={languageStepShown()}
-                fallback={
-                  <AccountLogin
-                    variant={platform.appInfo()?.variant ?? "production"}
-                    state={auth.centralAuth()}
-                    onRetry={auth.retryCentralAccount}
-                    onRequestEmailCode={auth.requestEmailCode}
-                    onVerifyEmailCode={auth.verifyEmailCode}
-                    onReset={auth.logoutCentralAccount}
-                    onOpenCompanySignIn={auth.openCompanySignIn}
-                    language={i18n.locale()}
-                    onChangeLanguage={languageStep.reopen}
-                  />
-                }
-              >
+              <Show when={languageStepShown()}>
                 <LanguageStep
                   variant={platform.appInfo()?.variant ?? "production"}
                   reopened={languageStep.reopened()}
@@ -187,7 +194,7 @@ export function AppAccessGate() {
                           onSave={setup.saveSetup}
                           onPreviewInvite={setup.previewInvite}
                           onJoinRemote={joinRemoteDuringSetup}
-                          onLogout={auth.logoutCentralAccount}
+                          onLogout={account().id === "local" ? undefined : auth.logoutCentralAccount}
                         />
                       </Loading>
                     </Show>
@@ -208,7 +215,7 @@ export function AppAccessGate() {
         ready={
           !platform.chatWindow &&
           !splashShown() &&
-          !!auth.visibleSignedInAccount() &&
+          gateAccount() !== null &&
           (setup.setupState()?.completed === true || !scope.connection.hasContent)
         }
       />

@@ -290,9 +290,9 @@ export interface MobileAgent {
   title: string;
   description: string;
   preview: string;
-  updatedLabel: string;
-  /** The host's last update of the agent, an ISO time, or null. The unread sort orders use it. */
+  /** ISO time of the last message, used to order the list. Null when the chat has none. */
   updatedAt: string | null;
+  updatedLabel: string;
   avatarUrl?: string | null;
   avatarSeed: string;
   avatarHue: AvatarHue | null;

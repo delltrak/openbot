@@ -196,14 +196,13 @@ export const AgentListRow = memo(function AgentListRow({ agent, leftInset = 20, 
           className="min-h-20 w-full flex-row items-center gap-3 py-1"
           style={{
             backgroundColor: background,
-            opacity: pressed ? 0.58 : 1,
             paddingLeft: leftInset,
             paddingRight: rightInset,
           }}
         >
           {avatar}
           <AgentRowTextReveal active={isUnpinTarget}>
-            <View className="min-w-0 flex-1 gap-0.5">
+            <View className="min-w-0 flex-1 gap-0.5" style={{ opacity: pressed ? 0.72 : 1 }}>
               <View className="flex-row items-center gap-2">
                 <Typography.Paragraph
                   className="font-semibold min-w-0 flex-1"
@@ -215,7 +214,10 @@ export const AgentListRow = memo(function AgentListRow({ agent, leftInset = 20, 
                 {waitReason ? (
                   <AgentWaitChip reason={waitReason} />
                 ) : (
-                  <Typography.Paragraph className="text-muted" style={typeScale.caption}>
+                  <Typography.Paragraph
+                    className={unreadCount > 0 ? "font-semibold" : "text-muted"}
+                    style={typeScale.caption}
+                  >
                     {agent.updatedLabel}
                   </Typography.Paragraph>
                 )}
@@ -226,7 +228,7 @@ export const AgentListRow = memo(function AgentListRow({ agent, leftInset = 20, 
                 </Typography.Paragraph>
               ) : null}
               <Typography.Paragraph
-                className="text-text-secondary"
+                className={unreadCount > 0 && !waitReason ? "" : "text-text-secondary"}
                 numberOfLines={1}
                 style={[typeScale.preview, lineDirectionStyle(previewLine)]}
               >

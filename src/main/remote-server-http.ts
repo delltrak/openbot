@@ -8,6 +8,7 @@
 // returns a decoded value or throws one of `remote-server-errors.ts`. Deciding what a throw means for
 // the user is `remote-server-connection-status.ts`; deciding which server to ask is the caller's.
 
+import { isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import type { TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
 import { teamHttpCodec } from "@openbot/contracts/team-protocol/http-codecs";
@@ -218,13 +219,18 @@ class RemoteTransportError extends Schema.TaggedError<RemoteTransportError>()("R
 }) {}
 
 export const remoteFetch = Effect.fn("RemoteHttp.fetch")(
-  (input: string | URL, init: RequestInit = {}, timeoutMs = REMOTE_REQUEST_TIMEOUT_MS) =>
-    Effect.tryPromise({
+  (input: string | URL, init: RequestInit = {}, timeoutMs = REMOTE_REQUEST_TIMEOUT_MS) => {
+    const target = input instanceof URL ? input.href : input;
+    if (isOpenBotCloudUrl(target)) {
+      return Effect.fail(new RemoteTransportError({ cause: new Error(sourceText("error.remote.requestFailed")) }));
+    }
+    return Effect.tryPromise({
       try: (signal) =>
         fetch(input, {
           ...init,
           signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs), ...(init.signal ? [init.signal] : [])]),
         }),
       catch: (cause) => new RemoteTransportError({ cause }),
-    }),
+    });
+  },
 );

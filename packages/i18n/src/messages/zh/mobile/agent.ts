@@ -578,6 +578,8 @@ export const messages = {
   "mobile.agent.home.sort.manual": "手动",
   "mobile.agent.home.sort.unreadGroup": "未读集中显示",
   "mobile.agent.home.sort.unreadFirst": "文件夹内未读优先",
+  "mobile.agent.home.orderRecent": "最近消息",
+  "mobile.agent.home.orderManual": "我的顺序",
   "mobile.agent.route.appearance": "外观",
   "mobile.agent.route.cropPhoto": "移动与缩放",
   "mobile.agent.info.memory.inclusion.label": "记忆使用方式",

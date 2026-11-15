@@ -1,4 +1,5 @@
 import type { AgentEvent, TeamRealtimeEvent } from "@openbot/contracts/ipc";
+import { isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { decodeSignalServerMessage } from "@openbot/contracts/signal-protocol/decode";
 import {
@@ -60,6 +61,36 @@ const peerError = (error: unknown) =>
         reference: failureReference(error),
       });
 const referenced = (message: string, reference: string | null) => new RemotePeerError({ message, reference });
+
+/**
+ * A Signal URL on `openbot.run` is not opened. The text is the same host-offline error as
+ * `host_unavailable`. A local or private URL returns null and the socket opens as before.
+ */
+function refuseCloudSignalUrl(signalUrl: string): RemotePeerError | null {
+  if (!isOpenBotCloudUrl(signalUrl)) return null;
+  return referenced(sourceText("error.remote.hostOffline"), referenceFrom("signal", "host_unavailable"));
+}
+
+/** `turn:` and `stun:` URLs have no `//`, so the host is read only after the URL has one. */
+function iceUrlNamesOpenBotCloud(value: string): boolean {
+  if (isOpenBotCloudUrl(value)) return true;
+  if (!/^[a-z][a-z0-9+.-]*:(?!\/\/)/iu.test(value)) return false;
+  return isOpenBotCloudUrl(value.replace(/^([a-z][a-z0-9+.-]*):/iu, "$1://"));
+}
+
+/** Drops ICE servers that name `openbot.run`. A server with no URL left is dropped. */
+function withoutCloudIceServers(servers: readonly RTCIceServer[]): RTCIceServer[] {
+  const kept: RTCIceServer[] = [];
+  for (const server of servers) {
+    const urls = (typeof server.urls === "string" ? [server.urls] : server.urls).filter(
+      (url) => !iceUrlNamesOpenBotCloud(url),
+    );
+    if (urls.length === 0) continue;
+    const originalCount = typeof server.urls === "string" ? 1 : server.urls.length;
+    kept.push(urls.length === originalCount ? server : { ...server, urls });
+  }
+  return kept;
+}
 
 /** Signal error codes that have their own sentence. `session_revoked` and `rate_limited` have their own steps. */
 const SIGNAL_ERROR_TEXT = new Map<string, string>([
@@ -1145,14 +1176,15 @@ export function createRemoteTeamPeer(
       // The candidates gather while the socket says hello and waits for `ready`. The signal lock holds
       // `ready` until the offer is made. A failure here only leaves the connection to `ready`. Each
       // Signal machine names its own TURN relays, so only the ICE servers of the same machine count.
-      if (known && known.signalUrl === bootstrap.signalUrl && Date.now() - known.at < ICE_SERVERS_REUSE_MS)
-        yield* Effect.forkIn(
-          state.signalLock
-            .withPermit(prepareConnection(state, known.iceServers, known.at, actions))
-            .pipe(Effect.ignore),
-          workScope,
-          { startImmediately: true },
-        );
+      if (known && known.signalUrl === bootstrap.signalUrl && Date.now() - known.at < ICE_SERVERS_REUSE_MS) {
+        const iceServers = withoutCloudIceServers(known.iceServers);
+        if (iceServers.length > 0)
+          yield* Effect.forkIn(
+            state.signalLock.withPermit(prepareConnection(state, iceServers, known.at, actions)).pipe(Effect.ignore),
+            workScope,
+            { startImmediately: true },
+          );
+      }
       try {
         openSignal(state, actions);
       } catch (error) {
@@ -1164,6 +1196,8 @@ export function createRemoteTeamPeer(
 
   /** A socket that waits for its hello. A refusal or a close before then only leaves it unused. */
   function prepareSignalSocket(signalUrl: string): WebSocket | null {
+    // The speculative socket must not dial openbot.run. `openSignal` reports the refusal.
+    if (isOpenBotCloudUrl(signalUrl)) return null;
     try {
       const socket = new WebSocket(signalUrl);
       socket.onerror = () => socket.close();
@@ -1213,6 +1247,12 @@ export function createRemoteTeamPeer(
     if (Date.now() < signalRetryAt) {
       prepared?.close();
       scheduleReconnect(state, actions);
+      return;
+    }
+    const refused = refuseCloudSignalUrl(state.signalUrl);
+    if (refused) {
+      prepared?.close();
+      failPeer(state, refused, actions);
       return;
     }
     if (!state.waitingForHost) armConnectedTimer(state, actions);
@@ -1434,7 +1474,7 @@ export function createRemoteTeamPeer(
         // Null on the `ready` that answers a TURN refresh: the credentials are new, the connection is
         // the one already open.
         state.connectionId = message.connectionId ?? state.connectionId;
-        state.iceServers = message.iceServers;
+        state.iceServers = withoutCloudIceServers(message.iceServers);
         // An older Signal names no grace: it drops the connection 30 s after the socket closes.
         if (!turnRefresh) state.reconnectGraceMs = message.reconnectGraceMs ?? DEFAULT_RECONNECT_GRACE_MS;
         if (!state.connectionId)
@@ -1571,7 +1611,10 @@ export function createRemoteTeamPeer(
   }
 
   function createPeerConnection(state: PeerState, iceServers: RTCIceServer[], actions: ActionsRef): RTCPeerConnection {
-    const connection = new RTCPeerConnection({ iceServers, bundlePolicy: "max-bundle" });
+    const connection = new RTCPeerConnection({
+      iceServers: withoutCloudIceServers(iceServers),
+      bundlePolicy: "max-bundle",
+    });
     state.connection = connection;
     // The host counts restarts for each connection, from zero.
     state.iceRestarts = 0;

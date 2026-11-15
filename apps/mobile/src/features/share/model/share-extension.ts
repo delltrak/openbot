@@ -1,5 +1,6 @@
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { type NativeModule, requireOptionalNativeModule } from "expo";
+import Constants from "expo-constants";
 import { Directory, File, Paths } from "expo-file-system";
 import { supportLog, supportLogValue } from "@/features/support/model/support-log";
 import {
@@ -55,7 +56,11 @@ declare class ShareExtensionModule extends NativeModule {
 const native = requireOptionalNativeModule<ShareExtensionModule>("OpenBotShareExtension");
 
 /** The App Group of the app and its extensions. `app.json` names the same group. */
-const APP_GROUP = "group.run.openbot.mobile";
+const configuredAppGroup = Constants.expoConfig?.extra?.iosAppGroup;
+const APP_GROUP =
+  typeof configuredAppGroup === "string" && configuredAppGroup.length > 0
+    ? configuredAppGroup
+    : "group.run.openbot.mobile";
 /** `plugins/share-extension/ShareExtensionData.swift` and `NotificationService.swift` read this file. */
 const DIRECTORY_FILE = "share-extension.json";
 /**

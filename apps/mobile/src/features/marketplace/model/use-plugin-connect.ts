@@ -1,4 +1,5 @@
 import { type McpServerConfig, relayCallbackQuery } from "@openbot/contracts/ipc";
+import { isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import { applyMcpFlow, type McpAuthValues } from "@openbot/contracts/mcp-connect-flows";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -119,6 +120,7 @@ export function usePluginConnect(serverId: string, app: MobilePluginApp | null, 
         if (!opened && status.authorizeUrl) {
           const page = relayPage(status.authorizeUrl);
           if ("error" in page) throw new Error(t(page.error));
+          if (isOpenBotCloudUrl(page.url)) throw new Error(t("mobile.marketplace.app.openFailed"));
           opened = true;
           setState({ phase: "signIn", flowId, url: page.url, state: page.state, paste: page.paste });
           await Linking.openURL(page.url).catch(() => setError(t("mobile.marketplace.app.openFailed")));
@@ -155,6 +157,10 @@ export function usePluginConnect(serverId: string, app: MobilePluginApp | null, 
   /** Opens the sign-in page again, for a user who closed the browser. */
   function reopen() {
     if (state.phase !== "signIn") return;
+    if (isOpenBotCloudUrl(state.url)) {
+      setError(t("mobile.marketplace.app.openFailed"));
+      return;
+    }
     void Linking.openURL(state.url).catch(() => setError(t("mobile.marketplace.app.openFailed")));
   }
 

@@ -1,4 +1,5 @@
 import { agentTemplateShareOrigin } from "@openbot/contracts/agent-template-links";
+import type { MarketplaceAgentPage, MarketplaceSkillPage } from "@openbot/contracts/ipc";
 import { sourceText } from "@openbot/i18n";
 import { runTeamEffect } from "@openbot/team-client";
 import { createMarketplaceCatalog } from "@openbot/team-client/marketplace-catalog";
@@ -25,7 +26,11 @@ import { currentText } from "@openbot/ui/text";
 import { Effect } from "effect";
 import type { AgentTemplateInstallCalls } from "../agent-templates/agent-templates-port";
 import type { MarketplaceCalls } from "../settings/marketplace-calls";
+import { pageUsesOpenBotCloud } from "./cloud-page";
 import { webMcpRelay } from "./web-mcp-relay";
+
+const emptySkillPage = (): MarketplaceSkillPage => ({ skills: [], nextCursor: null });
+const emptyAgentPage = (): MarketplaceAgentPage => ({ agents: [], nextCursor: null });
 
 /** No server id: the account is a member, or the host runs an OpenBot without agent-install-v1. */
 const noAgentInstall = () => currentText().t("webClient.error.agentInstallNotAllowed");
@@ -46,14 +51,28 @@ export function createWebMarketplaceCalls(
   const relay = webMcpRelay();
   return {
     skills: {
-      list: (query) => runTeamEffect(catalog.skills.list(query)),
-      get: (id) => runTeamEffect(catalog.skills.get(id)),
-      getBySlug: (slug) => runTeamEffect(catalog.skills.getBySlug(slug)),
+      list: (query) =>
+        pageUsesOpenBotCloud() ? Promise.resolve(emptySkillPage()) : runTeamEffect(catalog.skills.list(query)),
+      get: (id) =>
+        pageUsesOpenBotCloud()
+          ? Promise.reject(new Error(sourceText("error.marketplace.catalogLoadFailed")))
+          : runTeamEffect(catalog.skills.get(id)),
+      getBySlug: (slug) =>
+        pageUsesOpenBotCloud()
+          ? Promise.reject(new Error(sourceText("error.marketplace.catalogLoadFailed")))
+          : runTeamEffect(catalog.skills.getBySlug(slug)),
     },
     agents: {
-      list: (query) => runTeamEffect(catalog.agents.list(query)),
-      get: (id) => runTeamEffect(catalog.agents.get(id)),
-      getListing: (id) => runTeamEffect(catalog.agents.getListing(id)),
+      list: (query) =>
+        pageUsesOpenBotCloud() ? Promise.resolve(emptyAgentPage()) : runTeamEffect(catalog.agents.list(query)),
+      get: (id) =>
+        pageUsesOpenBotCloud()
+          ? Promise.reject(new Error(sourceText("error.marketplace.catalogLoadFailed")))
+          : runTeamEffect(catalog.agents.get(id)),
+      getListing: (id) =>
+        pageUsesOpenBotCloud()
+          ? Promise.reject(new Error(sourceText("error.marketplace.catalogLoadFailed")))
+          : runTeamEffect(catalog.agents.getListing(id)),
     },
     shareOrigin: agentTemplateShareOrigin(window.location.origin),
     agentSkills: (serverId) => ({
@@ -133,7 +152,10 @@ export function createWebAgentTemplateCalls(
   const catalog = createMarketplaceCatalog(accountFetch);
   return {
     agentTemplates: {
-      get: (id) => runTeamEffect(catalog.templates.get(id)),
+      get: (id) =>
+        pageUsesOpenBotCloud()
+          ? Promise.reject(new Error(sourceText("error.marketplace.templateUnreadable")))
+          : runTeamEffect(catalog.templates.get(id)),
       install: async () => {
         throw new Error(noAgentInstall());
       },

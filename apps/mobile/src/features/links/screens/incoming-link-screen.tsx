@@ -1,4 +1,4 @@
-import { OPENBOT_CONTROL_PLANE_ORIGIN } from "@openbot/contracts/invite-links";
+import { isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import { parseMobileConnectUrl } from "@openbot/contracts/mobile-connect";
 import { Redirect, router, Stack, useLocalSearchParams } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
@@ -121,7 +121,7 @@ function IncomingLinkContent({ request }: { request?: string }) {
 
   // A link can name any account service. Show one that is not ours before the phone connects to it.
   const pairingService = link.kind === "pairing" && !session ? parseMobileConnectUrl(link.url)?.apiUrl : undefined;
-  const accountService = pairingService && pairingService !== OPENBOT_CONTROL_PLANE_ORIGIN ? pairingService : null;
+  const accountService = pairingService && !isOpenBotCloudUrl(pairingService) ? pairingService : null;
 
   return (
     <View
@@ -156,7 +156,7 @@ function IncomingLinkContent({ request }: { request?: string }) {
           <Button.Label>{busy ? t("common.connecting") : t("mobile.link.pairing.connect")}</Button.Label>
         </Button>
       ) : null}
-      {link.kind === "plugin" ? (
+      {link.kind === "plugin" && !isOpenBotCloudUrl(link.url) ? (
         <Button
           onPress={() => {
             void haptics.impact("soft");

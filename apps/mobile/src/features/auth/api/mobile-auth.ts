@@ -1,8 +1,8 @@
 import { type AvatarMimeType, isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import { companySignInErrorKey, MOBILE_COMPANY_SIGN_IN_RETURN } from "@openbot/contracts/company-sign-in";
 import { AVATAR_IMAGE_LIMITS } from "@openbot/contracts/input-limits";
-import { OPENBOT_CONTROL_PLANE_ORIGIN } from "@openbot/contracts/invite-links";
 import type { CentralAuthUser } from "@openbot/contracts/ipc";
+import { isLocalOpenBotServiceUrl, isOpenBotCloudUrl } from "@openbot/contracts/local-network";
 import {
   isMobileConnectDevelopmentHost,
   isMobileConnectHostBinding,
@@ -71,12 +71,14 @@ export async function redeemMobileConnectUrl(value: string): Promise<MobileSessi
 }
 
 async function redeemMobileConnectSession(value: string): Promise<MobileSession> {
-  void retryMobileSessionRevocations();
   const payload = parseMobileConnectUrl(value);
-  if (!payload) {
+  // A cloud host, and any host that is not on the local network, is refused before a request.
+  if (!payload || !isLocalOpenBotServiceUrl(payload.apiUrl)) {
     throw new Error(currentText().t("mobile.auth.error.invalidCode"));
   }
   if (!payload.host) throw new Error(currentText().t("mobile.auth.error.codeOutdated"));
+
+  void retryMobileSessionRevocations();
 
   // Do not consume a one-time ticket or overwrite a permanent legacy token before
   // its revocation is confirmed. Retry cleanup against the OLD account service.
@@ -122,10 +124,15 @@ async function redeemMobileConnectSession(value: string): Promise<MobileSession>
   return session;
 }
 
-/** The account service for email sign-in. A development build can name a local one. */
-function mobileAccountApiUrl(): string {
+/**
+ * The account service for email sign-in. Only a development build may name one, and only on the
+ * local network. This build has no cloud account service.
+ */
+function mobileAccountApiUrl(): string | null {
   const override = process.env.EXPO_PUBLIC_OPENBOT_API_URL;
-  return (override && __DEV__ && normalizeAccountApiUrl(override)) || OPENBOT_CONTROL_PLANE_ORIGIN;
+  if (!override || !__DEV__) return null;
+  const url = normalizeAccountApiUrl(override);
+  return url && isLocalOpenBotServiceUrl(url) ? url : null;
 }
 
 export interface MobileEmailChallenge {
@@ -187,6 +194,12 @@ export async function verifyMobileEmailCode(challengeId: string, code: string): 
     if (current) throw new Error(currentText().t("mobile.auth.error.alreadySignedIn"));
     const device = await mobileDeviceIdentity();
     const apiUrl = mobileAccountApiUrl();
+    if (!apiUrl) {
+      throw new MobileEmailSignInError(
+        currentText().t("mobile.auth.error.accountServiceUnreachable"),
+        "auth_api_unavailable",
+      );
+    }
     const { response, body } = await mobileEmailRequest("/v1/mobile-auth/email/verify", {
       challengeId,
       code: normalized,
@@ -235,7 +248,7 @@ export async function signInMobileWithCompany(email: string): Promise<MobileSess
     );
     if (!start.response.ok) throw companySignInError(errorCode(start.body), start.response);
     const authorizationUrl = start.body?.authorizationUrl;
-    if (!isString(authorizationUrl) || !/^https?:\/\//u.test(authorizationUrl)) {
+    if (!isString(authorizationUrl) || !/^https?:\/\//u.test(authorizationUrl) || isOpenBotCloudUrl(authorizationUrl)) {
       throw companySignInError("company_sign_in_failed");
     }
     const result = await openAuthSessionAsync(authorizationUrl, MOBILE_COMPANY_SIGN_IN_RETURN);
@@ -247,6 +260,12 @@ export async function signInMobileWithCompany(email: string): Promise<MobileSess
     if (!code) throw companySignInError("company_sign_in_failed");
     const device = await mobileDeviceIdentity();
     const apiUrl = mobileAccountApiUrl();
+    if (!apiUrl) {
+      throw new MobileEmailSignInError(
+        currentText().t("mobile.auth.error.accountServiceUnreachable"),
+        "auth_api_unavailable",
+      );
+    }
     const { response, body } = await mobileEmailRequest("/v1/mobile-auth/company/exchange", {
       code,
       codeVerifier: verifier,
@@ -294,10 +313,17 @@ async function mobileEmailRequest(
   headers: Record<string, string> = {},
   timeoutMs?: number,
 ): Promise<{ response: Response; body: DynamicRecord | null }> {
+  const apiUrl = mobileAccountApiUrl();
+  if (!apiUrl) {
+    throw new MobileEmailSignInError(
+      currentText().t("mobile.auth.error.accountServiceUnreachable"),
+      "auth_api_unavailable",
+    );
+  }
   try {
     return await withMobileAuthRequestTimeout(
       async (signal) => {
-        const request = await fetch(new URL(path, mobileAccountApiUrl()).toString(), {
+        const request = await fetch(new URL(path, apiUrl).toString(), {
           method: "POST",
           headers: { "Content-Type": "application/json", ...headers },
           body: JSON.stringify(payload),
@@ -366,6 +392,11 @@ async function readStoredSessionAndRevokeInvalid(requireRevocation: boolean): Pr
   try {
     const value = JSON.parse(stored);
     credential = decodeStoredMobileCredential(value);
+    if (!isLocalOpenBotServiceUrl(credential.apiUrl)) {
+      // Drop the credential on this phone. Do not call the cloud host to revoke it.
+      await LockedKeychain.deleteItemAsync(MOBILE_SESSION_KEY);
+      return null;
+    }
     const storedCredential = credential;
     if (decodePendingRevocations(storedRevocations).some((pending) => sameCredential(pending, storedCredential))) {
       await LockedKeychain.deleteItemAsync(MOBILE_SESSION_KEY);
@@ -401,6 +432,10 @@ export function validateMobileSession(
 }
 
 async function refreshMobileProfile(session: MobileSession): Promise<MobileSession | null> {
+  if (!isLocalOpenBotServiceUrl(session.apiUrl)) {
+    await deleteMobileSessionIfCurrent(session.sessionToken);
+    return null;
+  }
   const { response, body } = await withMobileAuthRequestTimeout(async (signal) => {
     const request = await fetch(new URL("/v1/mobile-auth/session", session.apiUrl).toString(), {
       headers: { Authorization: `Bearer ${session.sessionToken}` },
@@ -630,6 +665,7 @@ export function retryMobileSessionRevocations(): Promise<void> {
 }
 
 async function revokeMobileCredential(session: MobileCredential): Promise<void> {
+  if (!isLocalOpenBotServiceUrl(session.apiUrl)) return;
   try {
     await withMobileAuthRequestTimeout(async (signal) => {
       const response = await fetch(new URL("/v1/mobile-auth/session", session.apiUrl).toString(), {
@@ -682,6 +718,7 @@ export async function requestMobileAccount<T>(
   failure: string,
   timeoutMs?: number,
 ): Promise<T> {
+  if (!isLocalOpenBotServiceUrl(session.apiUrl)) throw new Error(failure);
   return withMobileAuthRequestTimeout(
     async (signal) => {
       let response: Response;
@@ -746,6 +783,9 @@ async function readResponseBody(response: Response, signal: AbortSignal): Promis
 }
 
 async function saveMobileSession(session: MobileSession): Promise<void> {
+  if (!isLocalOpenBotServiceUrl(session.apiUrl)) {
+    throw new Error(currentText().t("mobile.auth.error.invalidCode"));
+  }
   await serializeMobileSessionStorage(() => LockedKeychain.setItemAsync(MOBILE_SESSION_KEY, JSON.stringify(session)));
 }
 

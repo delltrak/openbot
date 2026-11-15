@@ -92,7 +92,7 @@ import { SplitPaneLayers, useSplitLayout } from "@/shared/components/adaptive-sp
 import { AndroidBlurTarget } from "@/shared/components/android-header-blur";
 import { useAppLoadingOverlay, useScreenLoadingLabel } from "@/shared/components/app-loading-overlay";
 import { ChromeGlassSheen } from "@/shared/components/chrome-glass-sheen";
-import { LargeTitle, LargeTitleBar, useLargeTitleScroll } from "@/shared/components/large-title";
+import { LargeTitleBar, useLargeTitleScroll } from "@/shared/components/large-title";
 import { type MenuAction, MenuView } from "@/shared/components/menu-view";
 import { useChromeGlass } from "@/shared/lib/chrome-glass";
 import { haptics } from "@/shared/lib/haptics";
@@ -268,6 +268,7 @@ function applyChatDrop(workspace: MobileWorkspaceActions, serverId: string, chan
 /** The name of each chat order in the chat options menu. */
 const CHAT_ORDER_LABEL = {
   manual: "mobile.agent.home.sort.manual",
+  recent: "mobile.agent.home.orderRecent",
   "unread-group": "mobile.agent.home.sort.unreadGroup",
   "unread-first": "mobile.agent.home.sort.unreadFirst",
 } as const satisfies Record<MobileChatOrder, MobileTextKey>;
@@ -514,6 +515,7 @@ export function ConnectedScreen({ variant = "screen" }: { variant?: "screen" | "
       ...mobileWaitingItems(
         layout,
         unpinnedAgents.filter((agent) => waitingAgentIds.has(agent.id)),
+        chatOrder,
       ),
       ...(grouped
         ? mobileUnreadItems(
@@ -523,6 +525,7 @@ export function ConnectedScreen({ variant = "screen" }: { variant?: "screen" | "
           )
         : []),
       ...mobileSidebarItems(layout, listedAgents, listedChannels, undefined, t, {
+        recent: chatOrder === "recent",
         unreadFirst: chatOrder === "unread-first" ? unread : null,
         aside: grouped ? unread : null,
       }),
@@ -571,8 +574,6 @@ export function ConnectedScreen({ variant = "screen" }: { variant?: "screen" | "
     router.push("/add-agent");
   };
   const sceneShows = listReady && showAgentsScene;
-  // The same condition as the connection state in the bar.
-  const statusShows = hasSelectedServer && !activeServer.initialConnectionPending && !activeServerOnline;
   // The empty scene has its own main action where the field would be.
   const searchShows = listReady && hasSelectedServer && !onboarding.active && !sceneShows;
   // An app update drops the lilac block to a header above the list, where the search field shows.
@@ -747,7 +748,10 @@ export function ConnectedScreen({ variant = "screen" }: { variant?: "screen" | "
         return true;
       },
       onDraggingChange: setDragging,
-      onDrop: (_dragged, _target, change) => applyChatDrop(workspace(), serverId, change),
+      onDrop: (_dragged, _target, change) => {
+        // A drag sets the saved order, so the list keeps that order instead of jumping back.
+        applyChatDrop(workspace(), serverId, change);
+      },
       readPins: () => workspace().readChatPins(serverId),
       // Without manual sections, a drop in the list only unpins: it does not move the chat in the layout.
       layout: () => (chatOrder === "unread-first" ? null : sidebarLayout),
@@ -966,15 +970,7 @@ export function ConnectedScreen({ variant = "screen" }: { variant?: "screen" | "
                 windowSize={dragging ? LIST_WINDOW_SIZE * 3 : LIST_WINDOW_SIZE}
                 ListHeaderComponent={
                   <AgentListRowReveal index={0} reveal={listReveal}>
-                    {hasSelectedServer ? (
-                      <LargeTitle
-                        scroll={scroll}
-                        title={activeServer.name}
-                        above={<AppUpdateSpacer header={updateHeader} headerHeight={headerHeight} />}
-                        accessibilityLabel={t("mobile.agent.home.serverTitle", { name: activeServer.name })}
-                        onPress={openDrawer}
-                      />
-                    ) : null}
+                    {hasSelectedServer ? <AppUpdateSpacer header={updateHeader} headerHeight={headerHeight} /> : null}
                     {sidebar?.error ? (
                       <View className="gap-2 px-4">
                         <Typography.Paragraph className="text-danger-text">
@@ -1087,8 +1083,8 @@ export function ConnectedScreen({ variant = "screen" }: { variant?: "screen" | "
           scroll={scroll}
           title={activeServer.name}
           blurTarget={searchBlurTarget}
-          // The connection state takes the place of the title in the bar.
-          hidden={!searchShows || statusShows || search.open}
+          // The server name is not a title on this screen. The bar keeps the connection state.
+          hidden
         >
           <AppUpdateBlock header={updateHeader} scroll={scroll} hidden={search.open} />
         </LargeTitleBar>

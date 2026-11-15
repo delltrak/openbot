@@ -271,9 +271,11 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
   constructor(updater: UpdateAdapter, options: UpdateServiceOptions) {
     super();
     this.#updater = updater;
-    this.#autoDownload = options.autoDownload;
+    // This build does not contact a release host. The menu reports that updates are off.
+    this.#autoDownload = false;
     this.#options = {
       ...options,
+      enabled: false,
       platform: options.platform ?? process.platform,
       initialCheckDelayMs: options.initialCheckDelayMs ?? 12_000,
       checkIntervalMs: options.checkIntervalMs ?? DEFAULT_CHECK_INTERVAL,
@@ -284,12 +286,12 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
       },
     };
     this.#status = {
-      phase: options.enabled ? "idle" : "unsupported",
+      phase: "unsupported",
       currentVersion: options.currentVersion,
       availableVersion: null,
       progress: null,
       checkedAt: null,
-      message: options.enabled ? null : unsupportedMessage(),
+      message: unsupportedMessage(),
       errorCode: null,
     };
     this.on("diagnostic", (event) => {
@@ -732,23 +734,7 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
    * still holding a promise that a fresh call would be answered by?
    */
   #issueCheck(): Effect.Effect<UpdateCheckOutcome | null, UpdateOperationFailure> {
-    return Effect.gen({ self: this }, function* () {
-      if (this.#checkRequest) return yield* Deferred.await(this.#checkRequest);
-      const request = Deferred.makeUnsafe<UpdateCheckOutcome | null, UpdateOperationFailure>();
-      this.#checkRequest = request;
-      this.#rolloutMiss = null;
-      return yield* updateIO(() => this.#updater.checkForUpdates()).pipe(
-        // Logged once per request, here, because joined callers and the status keep only a message.
-        Effect.tapError(({ cause }) => Effect.sync(() => logUpdateFailure("OpenBot update check failed.", cause))),
-        Effect.onExit((exit) =>
-          Effect.gen({ self: this }, function* () {
-            yield* Deferred.done(request, exit);
-            if (this.#checkRequest === request) this.#checkRequest = null;
-          }),
-        ),
-        Effect.uninterruptible,
-      );
-    });
+    return Effect.succeed(null);
   }
 
   /**
@@ -804,13 +790,7 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
    * stall watchdog cancelled the last attempt still downloads under a live token.
    */
   #ensureCancellationToken(): Effect.Effect<UpdateCancellationToken | null, UpdateOperationFailure> {
-    return Effect.gen({ self: this }, function* () {
-      if (this.#cancellationToken && !this.#cancellationToken.cancelled) return this.#cancellationToken;
-      const checked = yield* Effect.result(updateIO(() => this.#updater.checkForUpdates()));
-      if (Result.isFailure(checked)) logUpdateFailure("OpenBot update check failed.", checked.failure.cause);
-      this.#cancellationToken = Result.isSuccess(checked) ? (checked.success?.cancellationToken ?? null) : null;
-      return this.#cancellationToken;
-    });
+    return Effect.succeed(null);
   }
 
   #markAvailable(version: string): void {

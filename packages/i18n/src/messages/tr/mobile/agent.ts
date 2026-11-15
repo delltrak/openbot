@@ -621,6 +621,8 @@ export const messages = {
   "mobile.agent.home.sort.manual": "Elle",
   "mobile.agent.home.sort.unreadGroup": "Okunmamışlar bir grupta",
   "mobile.agent.home.sort.unreadFirst": "Klasörlerde önce okunmamışlar",
+  "mobile.agent.home.orderRecent": "Son mesajlar",
+  "mobile.agent.home.orderManual": "Benim sıram",
   "mobile.agent.route.appearance": "Görünüm",
   "mobile.agent.route.cropPhoto": "Taşı ve Ölçeklendir",
   "mobile.agent.info.memory.inclusion.label": "Bellek kullanımı",

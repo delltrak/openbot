@@ -2,6 +2,7 @@ import type { AgentProviderId } from "@openbot/contracts/agent-providers";
 import type { DynamicRecord } from "@openbot/contracts/runtime-values";
 import { sourceText } from "@openbot/i18n/source";
 import { z } from "zod";
+import { ADB_DYNAMIC_TOOLS, OPENBOT_ADB_NAMESPACE } from "../adb-tools";
 import { BROWSER_DYNAMIC_TOOLS, BROWSER_TOOL_DEFINITIONS, OPENBOT_BROWSER_NAMESPACE } from "../browser-tools";
 import { OPENBOT_DYNAMIC_TOOLS, OPENBOT_TOOL_DEFINITIONS } from "../openbot-tools";
 import { type DynamicToolCallParams, isRecord } from "../protocol";
@@ -9,14 +10,15 @@ import { advertisedJsonSchema } from "./advertised-json-schema";
 import { toolGuidance } from "./tool-guidance";
 
 /** Discovery changes visibility only. Original definitions and execution owners stay authoritative. */
-export const BUILTIN_TOOL_CATALOG = [OPENBOT_DYNAMIC_TOOLS, ...BROWSER_DYNAMIC_TOOLS].flatMap((namespace) =>
-  namespace.tools.map((tool) => ({
-    namespace: namespace.name,
-    tool: tool.name,
-    name: `${namespace.name}.${tool.name}`,
-    description: tool.description,
-    inputSchema: tool.inputSchema,
-  })),
+export const BUILTIN_TOOL_CATALOG = [OPENBOT_DYNAMIC_TOOLS, ...BROWSER_DYNAMIC_TOOLS, ...ADB_DYNAMIC_TOOLS].flatMap(
+  (namespace) =>
+    namespace.tools.map((tool) => ({
+      namespace: namespace.name,
+      tool: tool.name,
+      name: `${namespace.name}.${tool.name}`,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+    })),
 );
 
 const DIRECT_NAMES = new Set([
@@ -526,9 +528,9 @@ export function discoverTools(params: DynamicToolCallParams, provider: AgentProv
       ...(guidance.length > 0 ? { guidance } : {}),
     };
     // A workflow search asks for OpenBot's own workflows, not for a website.
-    return workflowSearch || found.some(({ entry }) => entry.namespace === OPENBOT_BROWSER_NAMESPACE)
-      ? result
-      : { ...result, note: BROWSER_SEARCH_NOTE };
+    const browserSearch = found.some(({ entry }) => entry.namespace === OPENBOT_BROWSER_NAMESPACE);
+    const adbSearch = found.some(({ entry }) => entry.namespace === OPENBOT_ADB_NAMESPACE);
+    return workflowSearch || browserSearch || adbSearch ? result : { ...result, note: BROWSER_SEARCH_NOTE };
   }
   const parsed = describeSchema.safeParse(params.arguments);
   if (!parsed.success) throw new Error(sourceText("error.agent.toolRequestInvalid"));
