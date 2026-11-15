@@ -28,17 +28,6 @@ import { usePlatform } from "./platform";
 import { reportWorkspaceReady } from "./renderer-timing";
 import { WorkspaceShell } from "./WorkspaceShell";
 
-// A server switch mounts this gate again. Only the first splash of a start or a reload plays through.
-let startupSplashPlayed = false;
-
-/**
- * Lets the next start fade the splash as soon as the app is ready, as after a server switch.
- * Prototype stories render the whole app on each page load and do not need the crew each time.
- */
-export function skipStartupSplash(): void {
-  startupSplashPlayed = true;
-}
-
 /** The placeholder every lazy view below falls back to while its code loads. */
 function LoadingScreen() {
   const { t } = useText();
@@ -80,18 +69,13 @@ export function AppAccessGate() {
   const started = () => setup.setupLoaded() && platform.appInfo() !== null && languageLoaded();
   // The landing demo opens on the workspace at once, with no splash.
   const [splashShown, setSplashShown] = createSignal(!platform.landingPreview);
-  // A chat window is a new page too, but it fades as soon as it is ready.
-  const splashPlaysThrough = !startupSplashPlayed && platform.chatWindow === null;
-  // The splash lets the workspace mount its heavy views before the crew hop out.
+  // The splash lets the workspace mount its heavy views as it fades.
   const [splashOpen, setSplashOpen] = createSignal(false);
   const splashMoving = () => splashShown() && !splashOpen();
-  // The splash also covers the first load of the workspace, which then shows no screen of its own.
-  // On a start or a reload, the crew rain in once and hop out when the workspace is ready.
   const [workspaceReady, setWorkspaceReady] = createSignal(false);
   const workspaceShown = () =>
     gateAccount() !== null && (setup.setupState()?.completed === true || !scope.connection.hasContent);
-  // While main loads the account, the splash cannot know if the workspace follows. It holds: a splash
-  // that ended before the account came would rain again on the workspace's first load.
+  // Wait for the account before deciding whether the workspace needs to finish loading.
   const splashReady = () =>
     started() && auth.centralAuth().status !== "loading" && (!workspaceShown() || workspaceReady());
   const languageStep = createLanguageStep();
@@ -221,19 +205,11 @@ export function AppAccessGate() {
       />
       <QuitShortcutHint />
       <Show when={splashShown()}>
-        {/*
-          The same pile as the loading screen of a server, so a server that is still loading continues it.
-          A start or a reload always shows the crew, also when the app is ready at once.
-        */}
         <AppLoadingScreen
           label={t("app.loading")}
           ready={splashReady()}
-          quickExit={!splashPlaysThrough}
           onMountViews={() => setSplashOpen(true)}
-          onExited={() => {
-            startupSplashPlayed = true;
-            setSplashShown(false);
-          }}
+          onExited={() => setSplashShown(false)}
         />
       </Show>
     </>

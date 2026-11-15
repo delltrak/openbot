@@ -372,6 +372,7 @@ export function WebApp(props: { createRuntime?: WebRuntimeFactory } = {}) {
           </Show>
           <Show when={loadingShown()}>
             <AppLoadingScreen
+              immediate
               ready={state.loaded}
               onExited={() => {
                 setLoadingShown(false);

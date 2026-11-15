@@ -28,22 +28,15 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** A new crew falls into a pile while the app loads, then hops out of the screen. */
+/** The OpenBot logo appears while the app loads and fades when it is ready. */
 export const Sequence: Story = {};
 
 /** The app is ready at once, so the screen only fades. */
 export const FastLoad: Story = { args: { readyAfterMs: 300 } };
 
-/** The screen never finishes, so the loop and every status line can be inspected. */
+/** The startup indicator stays visible during a longer load. */
 export const Loading: Story = {
   render: () => <AppLoadingScreen />,
-};
-
-/** One crew. The same seed always makes the same pile. */
-export const Seeded: StoryObj<{ seed: number }> = {
-  args: { seed: 7 },
-  argTypes: { seed: { control: { type: "number", min: 0, step: 1 } } },
-  render: (args) => <AppLoadingScreen seed={args.seed} />,
 };
 
 /** The history of an agent loads: the lilac plush watches its balls. */
