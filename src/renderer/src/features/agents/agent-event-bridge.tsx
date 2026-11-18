@@ -1,5 +1,11 @@
 import { providerDisplayName } from "@openbot/contracts/agent-providers";
-import type { AgentEvent, AgentRuntimeSnapshot } from "@openbot/contracts/ipc";
+import {
+  type AgentEvent,
+  type AgentRuntimeSnapshot,
+  type AttachmentSummary,
+  type ConversationMessage,
+  LOCAL_SERVER_ID,
+} from "@openbot/contracts/ipc";
 import { cleanAgentMessageText } from "@openbot/team-client/agent-message-text";
 import { agentNotificationLevel } from "@openbot/team-client/agent-notifications";
 import { reconcileQueuesWithRuntimeWork } from "@openbot/team-client/dynamic-island-coordinator";
@@ -8,6 +14,7 @@ import { toast } from "@openbot/ui";
 import { currentText } from "@openbot/ui/text";
 import { classifyUserError } from "@openbot/user-errors";
 import { flush, onSettled } from "solid-js";
+import { showNewAgentBackdrop } from "../../agent-backdrops";
 import { withoutAgent } from "../../app-message-projection";
 import { playCompletionSoundForAgentEvent, prepareCompletionSound } from "../../completion-sound";
 import { usePlatform } from "../../platform";
@@ -26,11 +33,19 @@ import { latestIncomingConversationMessage } from "../conversation/conversation-
 import { noteSocialFollowReplyCompleted } from "../conversation/social-follow-prompt";
 import { appendTurnStepLine } from "../conversation/turn-step-lines";
 import { serverCanManageMcp } from "../servers/server-capabilities";
-import { useServerSettings } from "../servers/server-settings";
 import { useServers } from "../servers/servers-context";
+import { useSettings } from "../settings/settings-context";
 import { useSidebar } from "../sidebar/sidebar-context";
 import { readDictatedReplies } from "../speech/speech-replies";
-import { agentErrorDetails, claimErrorToast, providerErrorTitle, readableAgentError } from "./agent-error-text";
+import { isReaderAuthor } from "../team/reader-identity";
+import { usePresence } from "../team/team-context";
+import {
+  agentErrorDetails,
+  claimErrorToast,
+  createRetryNotices,
+  providerErrorTitle,
+  readableAgentError,
+} from "./agent-error-text";
 import { createAgentEventSounds } from "./agent-event-sounds";
 import {
   attentionAgentId,
@@ -57,12 +72,37 @@ import { agentsPort } from "./agents-port";
  *
  * Conversation invalidations also cover read cursors changed on another device.
  */
+/**
+ * The page of a backdrop message in a chat event. The desktop reads it from its file address, on this
+ * computer and on a joined server, so a chat that is not open can change the backdrop too.
+ */
+const agentBackdropPage = {
+  title: (message: ConversationMessage) => message.text,
+  bytes: async (attachment: AttachmentSummary) => {
+    if (!attachment.previewUrl) throw new Error("The page has no address.");
+    const response = await fetch(attachment.previewUrl);
+    if (!response.ok) throw new Error("The page cannot be read.");
+    return new Uint8Array(await response.arrayBuffer());
+  },
+};
+
 export function AgentEventBridge() {
   const channels = useChannels();
   const platform = usePlatform();
   const { activeServer, activeServerId } = useServers();
-  const { openServerSettings } = useServerSettings();
-  const { applyAccountUsage, accountUsageTargetKey, refreshAccountUsage } = useAuth();
+  const { setSkillsMarketplaceOpen } = useSettings();
+  const { applyAccountUsage, accountUsageTargetKey, refreshAccountUsage, centralAuth } = useAuth();
+  const { readerMemberId } = usePresence();
+  /** Whether a sender id is the reader, so a backdrop that another member asked for stays off. */
+  const isReader = (senderId: string) => {
+    const state = centralAuth();
+    return isReaderAuthor(senderId, {
+      memberId: readerMemberId(),
+      accountUserId: state.status === "signed_in" ? state.user.id : null,
+      onOwnComputer: activeServer()?.kind === "local",
+    });
+  };
+  const backdropPage = { ...agentBackdropPage, isReader };
   const { applyAgentStatus, refreshAgentProviders } = useProviders();
   const {
     agentList,
@@ -132,7 +172,10 @@ export function AgentEventBridge() {
     (agentId) =>
       soundLevel(agentId) !== "nothing" && agentList().some((agent) => agent.id === agentId && agent.notifications),
   );
+  const retryNotices = createRetryNotices();
   let readRefresh = 0;
+  /** Whether main sent a runtime snapshot to this page, which it does only after the page loaded. */
+  let snapshotReceived = false;
   let modelRefresh = 0;
 
   function handleAgentEvent(event: AgentEvent) {
@@ -183,6 +226,11 @@ export function AgentEventBridge() {
         applyOwnAgentLevels(event);
         return;
       case "conversation":
+        showNewAgentBackdrop<AttachmentSummary, ConversationMessage>(
+          event.snapshot.agentId,
+          event.snapshot.messages,
+          backdropPage,
+        );
         scheduleConversation(event.snapshot);
         return;
       case "conversation-page":
@@ -195,6 +243,11 @@ export function AgentEventBridge() {
             (existingUnreadCount === 0 ||
               explicitlyOpenedAgentChatId() === event.page.agentId ||
               agentChatsToRetryRead.has(trackingKey));
+          showNewAgentBackdrop<AttachmentSummary, ConversationMessage>(
+            event.page.agentId,
+            event.page.messages,
+            backdropPage,
+          );
           const pageApplied = applyConversationPage(event.page, "latest", "latest");
           const latestIncomingMessage = markNewMessagesRead
             ? latestIncomingConversationMessage(event.page.messages)
@@ -271,8 +324,10 @@ export function AgentEventBridge() {
         }));
         if (soundLevel(event.agentId) === "all" && !platform.chatWindow) prepareCompletionSound();
         return;
-      case "turn-completed":
+      case "turn-completed": {
         completedTurnByAgent.set(event.agentId, event.turnId);
+        const bannerKey = composerDraftKey({ agentId: event.agentId, serverId: activeServerId() });
+        retryNotices.clearAtTurnEnd(bannerKey, setConversationErrors, setConversationErrorRuns);
         setTurnProgress((current) =>
           current[event.agentId]?.turnId === event.turnId ? withoutAgent(current, event.agentId) : current,
         );
@@ -322,6 +377,7 @@ export function AgentEventBridge() {
           if (!platform.chatWindow && !event.quiet && !event.continues) noteSocialFollowReplyCompleted();
         }
         return;
+      }
       case "thread-turn-completed":
         // The chat's turn state stays: the run's own `turn-completed` did not leave its thread. Only a
         // routine thread plays the sound, as before: a routine run played it in the agent's chat.
@@ -383,7 +439,11 @@ export function AgentEventBridge() {
         return;
       }
       case "runtime-snapshot":
-        void channels.resync();
+        // A joined server sends a snapshot after a reconnect, when channel events can be lost. This
+        // computer loses events only while the page loads: the start read and the first sent snapshot
+        // cover that. It sends a snapshot at each token count change of a working agent, and a full
+        // channel read each time stalls typing (#11103).
+        if (activeServerId() !== LOCAL_SERVER_ID || !snapshotReceived) void channels.resync();
         applyAgentRuntimeSnapshot(event.snapshot);
         return;
       case "browser-takeover-requested":
@@ -420,6 +480,7 @@ export function AgentEventBridge() {
           // reader one line whatever its length, and dismissing it clears the whole run.
           const key = composerDraftKey({ agentId, serverId: activeServerId() });
           const message = readableAgentError(event.message);
+          retryNotices.noteError(key, event.message, message);
           setConversationErrors((current) => ({ ...current, [key]: message }));
           // The provider and model above the error let the user report which run failed (#2858).
           const provider = event.provider ? providerDisplayName(event.provider) : null;
@@ -447,17 +508,17 @@ export function AgentEventBridge() {
         if (claimErrorToast(toastKey)) {
           // An MCP server that a provider was not given or could not use is not the provider failing,
           // and calling it a provider error sends the user to the wrong settings page. The button
-          // shows only to a user who can see the server's MCP settings.
+          // opens the Marketplace, which holds the MCP servers, and shows only to a user who can
+          // manage them.
           const { t } = currentText();
           const mcp = event.code === "mcp_server_not_started";
-          const serverId = activeServerId();
           toast.error(mcp ? t("agent.error.mcpNotStarted") : providerErrorTitle(event.code), {
             ...{ description: toastKey },
             ...(mcp && serverCanManageMcp(activeServer())
               ? {
                   action: {
-                    label: t("agent.error.openMcpSettings"),
-                    onClick: () => openServerSettings(serverId, null, "mcp"),
+                    label: t("agent.error.openMarketplace"),
+                    onClick: () => setSkillsMarketplaceOpen(true),
                   },
                 }
               : {}),
@@ -506,6 +567,7 @@ export function AgentEventBridge() {
         return;
       }
       flush(() => handleAgentEvent(event));
+      if (event.type === "runtime-snapshot") snapshotReceived = true;
       // The main window also gets each event, so a chat window does not play or read it a second time.
       if (platform.chatWindow) return;
       playAgentEventSound(event);

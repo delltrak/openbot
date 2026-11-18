@@ -14,6 +14,8 @@ interface NewerDatabaseRecoveryOptions {
   translate: AppTranslate;
   /** The start path passes the same shutdown preparation as an in-app update. This copy does not install. */
   beforeInstall: (deadlineMs: number) => Promise<void>;
+  /** The version that did not start several times in a row, from the start attempts file. */
+  loopVersion: string | null;
 }
 
 /**

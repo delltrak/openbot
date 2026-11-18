@@ -8,13 +8,16 @@ import {
   type ConversationSnapshot,
   openExchangesOutside,
 } from "@openbot/contracts/ipc";
+import { THREAD_MESSAGE_SEARCH_PAGE_LIMIT } from "@openbot/contracts/team-protocol/thread-message-search-v1";
 import { cleanAgentMessageText } from "@openbot/team-client/agent-message-text";
-import type { AgentMessage } from "@openbot/ui/data";
+import type { AgentMessage, ComposerThreadMessageMatch } from "@openbot/ui/data";
 import { currentText } from "@openbot/ui/text";
 import { createEffect, createMemo, createStore, onCleanup, untrack } from "solid-js";
+import { noteAgentRequest } from "../../agent-requests";
 import { desktopAnalytics } from "../../analytics";
 import {
   agentMessagesEqual,
+  collectThreadMessageMatches,
   formatMessageTime,
   retainThinkingMessages,
   toAgentMessage,
@@ -26,6 +29,8 @@ import { usePlatform } from "../../platform";
 import { createScopeGuard } from "../../scope-lifetime";
 import { createSimpleContext } from "../../simple-context";
 import { useTurns } from "../../turns";
+import { useUiErrors } from "../../ui-errors";
+import { useAuth } from "../account/account-context";
 import { useAgentTasks } from "../agent-tasks/agent-tasks-context";
 import { useAgentReadTracking } from "../agents/agent-read-tracking";
 import { appendLatestRuntimeMessages, attentionKey } from "../agents/agent-runtime-snapshot";
@@ -82,6 +87,18 @@ function trimToLatestPage(conversation: ConversationState): void {
   conversation.messages = kept;
   conversation.references = references;
   conversation.page = { hasOlder: true, olderCursor: null };
+}
+
+/** A chat with no cursor of its own for its older messages: it has no page yet, or it was trimmed. */
+function lacksOlderCursor(page: ConversationPageInfo | undefined): boolean {
+  return !page || (page.hasOlder && !page.olderCursor);
+}
+
+/** The originals that a page's replies quote, as the chat shows them. */
+function pageReferences(page: ConversationPage): Record<string, AgentMessage> {
+  return Object.fromEntries(
+    Object.entries(page.references).map(([id, message]) => [id, toAgentMessage(message, page.agentId)]),
+  );
 }
 
 interface ConversationState {
@@ -149,6 +166,17 @@ const Conversation = createSimpleContext({
       setActiveTurns,
       setTurnProgress,
     } = useTurns();
+    const { clearUiErrors } = useUiErrors();
+    const { centralAuth } = useAuth();
+    const signedInAccount = createMemo(() => {
+      const auth = centralAuth();
+      return auth.status === "signed_in" ? auth.user.id : null;
+    });
+    // A read fails while no one is signed in. After a sign-in, its error no longer holds (#9796).
+    createEffect(signedInAccount, (account, previous) => {
+      if (account && previous !== undefined && account !== previous)
+        clearUiErrors(currentText().t("chat.errorStatus.readState"));
+    });
 
     const [conversations, writeConversations] = createStore<Record<string, ConversationState>>({});
     const rawAgentMessageBodies = new Map<string, string>();
@@ -743,13 +771,41 @@ const Conversation = createSimpleContext({
       }
     }
 
+    /**
+     * A page that streamed text overtook is not applied, but the place of the older messages that it
+     * gives is still right. A chat with no place of its own, such as a chat trimmed while it was not
+     * open, takes it: without it, a scroll up loads nothing (#11240). The chat keeps its own, newer
+     * copy of each message, and gets only the page's messages before its first one.
+     */
+    function keepOlderHistoryPlace(page: ConversationPage): void {
+      const conversation = conversations[page.agentId];
+      if (!conversation || !lacksOlderCursor(conversation.page)) return;
+      const mapped = toAgentMessages(page.messages, page.agentId);
+      const first = conversation.messages[0];
+      const start = first ? mapped.findIndex((message) => message.id === first.id) : -1;
+      // The chat must meet the page, or the place would leave a gap that the reader does not see.
+      if (start === -1 && !conversation.messages.some((message) => message.id === mapped[0]?.id)) return;
+      const older = mapped
+        .slice(0, Math.max(start, 0))
+        .map((message) => createStoredMessage({ ...message, animate: false }));
+      updateConversation(page.agentId, (current) => {
+        current.messages = mergeConversationPage(current.messages, older, "older");
+        current.references = { ...current.references, ...pageReferences(page) };
+        current.missingReferences = { ...current.missingReferences, ...missingReplyOriginals(page) };
+        current.page = page.pageInfo;
+      });
+    }
+
     function applyConversationPage(
       page: ConversationPage,
       merge: "replace" | "older" | "latest",
       windowMode?: "latest" | "around",
     ): boolean {
       flushConversationDeltas();
-      if (page.revision < (conversations[page.agentId]?.revision ?? -1)) return false;
+      if (page.revision < (conversations[page.agentId]?.revision ?? -1)) {
+        if (merge !== "older") keepOlderHistoryPlace(page);
+        return false;
+      }
       for (const message of page.messages) {
         const key = agentMessageKey(page.agentId, message.id);
         if (message.author !== "user" && message.status === "streaming") rawAgentMessageBodies.set(key, message.text);
@@ -775,8 +831,7 @@ const Conversation = createSimpleContext({
         // its place, and loaded messages that the page does not meet give way to the page.
         const mappedIds = new Set(pageMessages.map((message) => message.id));
         // A chat with no page yet, or a trimmed one, has no cursor of its own, so it takes the page's.
-        const own = conversation.page;
-        const trimmed = !own || (own.hasOlder && !own.olderCursor);
+        const trimmed = lacksOlderCursor(conversation.page);
         const tail = merge === "latest" && page.pageInfo.hasOlder && !trimmed;
         const keepsWindow = tail && conversation.windowMode === "around";
         const apart = tail && !keepsWindow && !currentMessages.some((message) => mappedIds.has(message.id));
@@ -792,9 +847,7 @@ const Conversation = createSimpleContext({
         const keepsOlder = keepsWindow || (tail && first !== undefined && !mappedIds.has(first.id));
         conversation.references = {
           ...(merge === "replace" ? {} : conversation.references),
-          ...Object.fromEntries(
-            Object.entries(page.references).map(([id, message]) => [id, toAgentMessage(message, page.agentId)]),
-          ),
+          ...pageReferences(page),
         };
         conversation.missingReferences = {
           ...(merge === "replace" ? {} : conversation.missingReferences),
@@ -919,6 +972,19 @@ const Conversation = createSimpleContext({
       }
     }
 
+    /** The side thread messages of the agent that have the `@` query. A message of the agent's own chat names no thread. */
+    function searchAgentThreadMessages(agentId: string, query: string): Promise<ComposerThreadMessageMatch[]> {
+      return collectThreadMessageMatches((cursor) =>
+        conversationPort().agent.searchConversationMessages({
+          query,
+          agentId,
+          ...(cursor ? { cursor } : {}),
+          limit: THREAD_MESSAGE_SEARCH_PAGE_LIMIT,
+          includeSideThreads: true,
+        }),
+      );
+    }
+
     function pruneInactiveAgentHistory(agentId: string): void {
       flushConversationDeltas();
       const messages = conversations[agentId]?.messages;
@@ -1014,6 +1080,7 @@ const Conversation = createSimpleContext({
           ...(clientMessageId ? { clientMessageId } : {}),
           ...(voiceRecordingDraftId ? { voiceRecordingDraftId } : {}),
         };
+        noteAgentRequest(serverId, agentId);
         const receipt = await conversationPort().agent.sendMessage(input, serverId);
         const errorKey = agentConversationKey(serverId, agentId);
         setUiErrors((current) => ({ ...current, [errorKey]: [] }));
@@ -1082,6 +1149,8 @@ const Conversation = createSimpleContext({
             serverId,
           );
           agentChatsToRetryRead.delete(requestKey);
+          // The read is saved now, so an earlier failure to save it no longer holds.
+          clearUiErrors(currentText().t("chat.errorStatus.readState"), requestKey);
           flushConversationDeltas();
           const nextState = isAgentChatReadable(agentId)
             ? state
@@ -1310,6 +1379,7 @@ const Conversation = createSimpleContext({
       markReplyCompleted,
       clearRecentReply,
       searchAgentMessages,
+      searchAgentThreadMessages,
       sendMessage,
       markAgentMessagesRead,
       markAgentMessagesUnread,

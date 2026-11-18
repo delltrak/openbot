@@ -205,7 +205,10 @@ when a server is idle or boat stops a sandbox; and `error` and `deleted`. The Wo
    **Check at a start.** `PRAGMA quick_check` reads every page of `openbot.db`: on a 15.7 GB file
    it stopped the main thread for 77 seconds to about 4 minutes. A clean close removes
    `openbot.db-wal`. Thus OpenBot runs the check at a start only when that file is there (a crash,
-   a kill, or a save while OpenBot ran) or when a migration ran.
+   a kill, or a save while OpenBot ran) or when a migration ran. After a stop that did not close the
+   file, the check runs in a separate database host process, so the main thread stays free. When that
+   process cannot start or run the check, the main thread runs it as before. The check after a
+   migration still runs on the main thread.
 6. **Start after a failure.** A client that cannot reach the host first calls
    `GET /v2/hosting/servers/:id/status` (owner or member; 404 for a host that is not a hosted
    server). It returns `{serverId, state, error, sleeping}` and writes nothing, so it does not count
@@ -565,8 +568,10 @@ the same `HostedUpdateAdapter` with folders that the host mounts in `/var/lib/op
 The Linux build contains `scripts/hosting/` (without the TypeScript files) in `resources/hosting`.
 On a server, root runs `openbot-hosted-update`:
 
-1. `openbot-update.timer` runs `stage` 5 to 10 minutes after each start of the timer and then
-   about each 6 hours. It reads the `latest-linux.yml` (`latest-linux-arm64.yml` on arm64) of the
+1. `openbot-update.timer` runs `check` 5 to 10 minutes after each start of the timer and then
+   about each hour. `check` runs `stage` when no `stage` of `check` succeeded in the last 6 hours
+   (`/run/openbot-update.staged`, so the first `check` after a boot stages), and then the step that
+   [Start loop](#start-loop) describes. `stage` reads the `latest-linux.yml` (`latest-linux-arm64.yml` on arm64) of the
    latest GitHub release, the manifest that the Linux desktop updater reads. When that version is newer than the installed one, it downloads the
    AppImage, checks its SHA-512 against the manifest, unpacks it in `/var/tmp`, checks that it has
    all hosting files, installs the packages in the `packages.txt` of that release, and copies it
@@ -580,7 +585,8 @@ On a server, root runs `openbot-hosted-update`:
    a complete disk, or when `.applying` shows an interrupted copy. `openbot.service` does not
    require it, so it starts after a failure too: with the old release, or with a partial copy after
    a failed copy, until the next start. On a self-installed server, the new release starts at the
-   next boot. A hosted server installs it itself: when the release is staged, OpenBot asks root to
+   next boot, or when idle if the automatic update switch is on (it is off by default). A hosted
+   server installs it itself: when the release is staged, OpenBot asks root to
    install it when idle, and when no connected client changed data or typed for 5 minutes and the
    start was 5 minutes ago. Reading is not use. Server Settings shows this wait as "other work",
    because `host-update-v1` has no reason for it. The automatic update switch of a hosted server
@@ -612,6 +618,44 @@ migrated. `stage` stops when it cannot read the installed version, and `provisio
 installed version is newer. A staged release that is no longer the latest one, for example a
 withdrawn release, is removed at the next `stage` run. A server that starts before that run applies
 it. A release without all of its `resources/hosting` files cannot update a server.
+
+#### Start loop
+
+A server has no window for the recovery window of the desktop. A server whose start
+failed started again each 10 seconds, without an end, in earlier releases. Now main stops the loop
+(`src/main/server-start-halt.ts`):
+
+- at the first failure when the database is from a newer OpenBot (`newer_database`): a restart
+  cannot help;
+- for all other failures, at the third failed start in a row of the same version (`start_failed`).
+  A failed migration rolls back and counts as a failed start, because its cause can be temporary
+  (a full disk, a lock). A start that fails with an error stops the loop at once; after a crash,
+  the next start stops it. This is the count of the desktop recovery window (`start-attempts.ts`).
+
+Main then writes `openbot-start-halt-v1.json` in its user data folder and exits with 78. The file
+has the reason word, the app version and a time only. `openbot.service` has
+`RestartPreventExitStatus=78`, so systemd does not start it again. The journal shows the reason.
+
+The next start reads and removes the file, logs the reason, and tries once more. A failure of that
+start stops the loop again. These start OpenBot again:
+
+- a restart or a resume of the server, or `sudo openbot restart` or `start`;
+- `sudo openbot update`;
+- `check` of `openbot-update.timer`, about each hour: when `openbot.service` is stopped with
+  status 78, it runs `stage` and starts the service again, after `apply` when a newer release is
+  staged. A hosted
+  owner has no shell, and a failure can be temporary (a full disk, no network), so each run tries
+  once more. It reads only the state of the unit (`ActiveState`, `ExecMainStatus`), never a file of
+  the service user.
+
+When OpenBot is not running, `openbot` commands that need the control socket say that the start
+loop stopped it, and name `openbot logs`, `sudo openbot update` and `sudo openbot restart`.
+
+A Docker container has no systemd. Its restart policy starts it again after exit 78 too, with the
+backoff of Docker. Each second start after a halt tries again.
+
+Not done yet: a safe mode that keeps a minimal Team API open while the start loop is stopped, so
+that the app can show the reason and the version to the owner.
 
 A server that has no updater, such as one made from a template before 0.26.0, needs one upgrade by
 hand. With a boat key that has command and file access: upload `scripts/hosting/` to
@@ -694,8 +738,8 @@ do not all pass the check before their processes grow. A start that fails counts
 
 | Level | When | What happens |
 | --- | --- | --- |
-| `ok` | Other times. After `low`, only at 256 MB above the `low` limit. | Turns start. |
-| `low` | Free memory is less than 512 MB or 12% of the total. | No new turn starts; the message stays queued. The agent shows one notice in each low period. The browser opens no new tab. At each sample, a Claude thread whose background tasks sent nothing for 30 minutes closes; with normal memory, background tasks keep their thread open. |
+| `ok` | Other times. After `low`, only at 256 MB above the `low` limit (10% of the total when that is less). | Turns start. |
+| `low` | Free memory is less than 512 MB or 12% of the total. Below 2.5 GB of total memory, 20% of the total replaces 512 MB, so a small server does not stay `low`. It is always at least 64 MB above the `critical` limit. | No new turn starts; the message stays queued. The agent shows one notice in each low period. The browser opens no new tab. At each sample, a Claude thread whose background tasks sent nothing for 30 minutes closes; with normal memory, background tasks keep their thread open. |
 | `critical` | Free memory is less than 256 MB or 6% of the total. | As `low`. Also, the provider threads with no turn close one time. They open again from their session at the next turn. Leftover agent processes stop (see below). |
 
 Agent processes (`AgentProcesses` in `src/main/server-memory.ts`):
@@ -1747,8 +1791,51 @@ sends the operator one message:
 | A purchase takes a machine and leaves 0 or 1 free machines of that product in that location | `Pool <location> <product>: <n> free machines left.` | Buy and `prepare` machines. |
 | A server starts on boat: no ready machine, the pool query failed, or its pool machine did not start it | `A <plan> server (<currency>, <server ID prefix>) starts on boat: <reason>.` | `move` it when a machine is ready. `leaseweb-pool.ts boat` lists it. |
 | A pool start is lost (no sign-in in 4 minutes) | `A <plan> server (<server ID prefix>) did not start on pool machine <host ID>. Prepare the machine again.` | `prepare --reinstall` the machine. |
+| A server plan starts (a new subscription) | ``New server plan for `<email>`: <plan>, <amount> (<currency>) for 1 <month or year>.`` | None. |
+| A license starts (a new subscription) | ``New license for `<email>`: <tier>, <n> users, <amount> (<currency>) for 1 <month or year>.`` | None. |
+| The owner cancels the renewal of a server plan or a license | ``Cancelled renewal of the <server plan or license> for `<email>`: <product>, <amount> (<currency>) for 1 <month or year>. It ends on <date>.`` | None. |
+| The owner resumes that renewal | ``Resumed renewal of the <server plan or license> for `<email>`: <product>, <amount> (<currency>) for 1 <month or year>.`` | None. |
+| A server plan or a license ends | ``Ended <server plan or license> for `<email>`: <product>, <amount> (<currency>) for 1 <month or year>. Reason: <cancelled or not paid>.`` | None. |
+| A paid Checkout page has a billing address in another country than the saved billing country | `VAT check: Checkout page <session ID> took the VAT of <country> (<treatment>), but its billing address is in <country>. ...` | Check the VAT of its invoice. |
+| Paid sales to consumers in other EU countries reach EUR 9,000 (net) in a calendar year, once a year | `VAT limit: in <year>, sales to consumers in other EU countries reached <amount> (net). ...` | Register for the EU One Stop Shop and charge the VAT of the buyer's country before EUR 10,000. |
 
-A message has no account, email or name. The boat message goes out only after the Worker stores the
+A purchase message (the last 5 rows) and a payment message (below) have the email of the account, on a
+developer decision, so keep the webhook in a private channel. A pool message has no account, email or
+name.
+
+The same webhook also gets one payment message for each invoice line of a server plan or a license
+that is paid or that fails, and for each refund and dispute:
+
+| Event | Message |
+| --- | --- |
+| A paid invoice line | ``Paid server plan for `<email>`: <plan>, <amount> (<currency>), 1 <month or year> period. <First purchase, Renewal or Adjustment>.`` |
+| A failed payment | ``Failed payment of the <server plan or license> for `<email>`: <product>, <amount> (<currency>), 1 <month or year> period. Reason: <Stripe reason>.`` |
+| A refund | ``Refunded <server plan or license> for `<email>`: <product>, <amount> (<currency>), 1 <month or year> period.`` |
+| A refund that failed after it was counted | ``Failed refund of the <server plan or license> for `<email>`: ...`` |
+| A dispute, and a lost dispute | ``Disputed payment of the <server plan or license> for `<email>`: ...``, ``Lost dispute of the <server plan or license> for `<email>`: ...`` |
+
+The product of a license is its number of users, such as `5 users`. The amount is the amount of the
+payment, the refund or the dispute. An adjustment is a plan change or a manual invoice. The sales
+ledger sends the message (`BillingSales.processPending`, in the cron of each 5 minutes), in the run that
+puts the fact in the OpenPanel ledger, so the message comes at most some minutes after the payment and
+one time. It needs `OPENPANEL_CLIENT_ID` and `OPENPANEL_CLIENT_SECRET` too. An imported payment, a $0 paid
+invoice (a trial start or a $0 proration) and a checkout step send no message. An account that is gone shows as `an unknown account`.
+`bun run test:billing-sale-alert` checks the messages. Thus a first purchase sends a `New` message and
+a `Paid` message.
+
+The amount of a purchase message is the list
+amount of one period, before a discount. A license at the bundle price adds `bundle price`, and a
+subscription that starts with a trial adds `It starts with a free trial.` Each new subscription sends
+one start message, and each ended subscription one end message: a claim in `billing_webhook_events`
+(`openbot_purchase:<subscription ID>`, `openbot_purchase_end:<subscription ID>`) stops a second one.
+A cancel or resume message goes out with the sync that stores the change, so a repeated event sends
+nothing. A cancel date that Stripe has for the subscription (`cancel_at`) is the date of the cancel
+message. One sync sends one message: a cancel that Stripe stores together with a change of plan or
+users sends no cancel message. A change of plan or users sends no purchase message. A server
+order with a license sends two messages, one for each subscription. A subscription that ends after its
+owner cancelled the renewal sends the cancel message and, later, the end message. A deleted server, a
+full refund and a dispute end the plan at once. The reason is `not paid` when the last payment of the
+plan had failed, and `cancelled` in each other case. The boat message goes out only after the Worker stores the
 boat start, so a lost race, a retry of a boat attempt, or a pool change whose answer was lost sends
 nothing. A failed send logs one line and is not sent again. Without the secret there are no messages.
 The encrypted `apps/auth-api/.env.production` holds the URL, and `bun run api:deploy` sets it. The CI
@@ -1758,7 +1845,8 @@ deploy keeps the value that the Worker has. To set only the secret:
 cd apps/auth-api && bunx wrangler secret put HOSTED_POOL_ALERT_WEBHOOK_URL
 ```
 
-`bun run test:hosted-pool-assignment` checks the messages.
+`bun run test:hosted-pool-assignment` checks the pool messages, and `bun run test:purchase-alert` checks
+the purchase messages.
 
 ## Not confirmed
 

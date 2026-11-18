@@ -1,7 +1,9 @@
 import type { CentralAuthUser } from "@openbot/contracts/ipc";
 import { AppLoadingScreen } from "@openbot/ui/features/account/AppLoadingScreen";
+import { UpdateRequiredScreen } from "@openbot/ui/features/updates/UpdateRequiredScreen";
 import { useText } from "@openbot/ui/text";
 import { createEffect, createMemo, createSignal, Loading, Show } from "solid-js";
+import { appPort } from "./app-port";
 import { useAuth } from "./features/account/account-context";
 import { useProviderDetection } from "./features/custom-providers/provider-detection-context";
 import { createLanguageStep } from "./features/onboarding/language-step";
@@ -11,6 +13,7 @@ import { useSetupProviderProps } from "./features/onboarding/setup-provider-prop
 import { useServerScope } from "./features/servers/server-scope";
 import { useServerSelection } from "./features/servers/server-selection";
 import { useSettings } from "./features/settings/settings-context";
+import { useUpdates } from "./features/updates/updates-context";
 import { WhatsNewOverlay } from "./features/updates/WhatsNewOverlay";
 import { QuitShortcutHint } from "./features/window/QuitShortcutHint";
 import { useI18n } from "./i18n-context";
@@ -63,6 +66,11 @@ export function AppAccessGate() {
   const detection = useProviderDetection();
   const settings = useSettings();
   const { joinRemoteDuringSetup } = useServerSelection();
+  const updates = useUpdates();
+  // An install that cannot update itself, or whose update failed, can close the screen until the next start.
+  const [requiredUpdateDismissed, setRequiredUpdateDismissed] = createSignal(false);
+  // Main sets it only after a check confirms that this version is below the supported minimum.
+  const updateRequired = () => updates.status().requiredVersion !== undefined && !requiredUpdateDismissed();
   // The splash also waits for the catalogs of the first language, so the first screen is not in
   // English. A later language change does not bring the splash back.
   const languageLoaded = createMemo<boolean>((was) => was === true || i18n.ready());
@@ -77,7 +85,7 @@ export function AppAccessGate() {
     gateAccount() !== null && (setup.setupState()?.completed === true || !scope.connection.hasContent);
   // Wait for the account before deciding whether the workspace needs to finish loading.
   const splashReady = () =>
-    started() && auth.centralAuth().status !== "loading" && (!workspaceShown() || workspaceReady());
+    started() && auth.centralAuth().status !== "loading" && (!workspaceShown() || workspaceReady() || updateRequired());
   const languageStep = createLanguageStep();
   // The language wheel shows on a settled sign-out, and again when its button reopens it.
   const languageStepShown = () =>
@@ -113,7 +121,16 @@ export function AppAccessGate() {
 
   return (
     <>
-      <Show when={started()}>
+      <Show when={started() && updateRequired()}>
+        <UpdateRequiredScreen
+          status={updates.status()}
+          logoVariant={platform.appInfo()?.variant ?? "production"}
+          onUpdate={updates.runAction}
+          onOpenDownloadPage={() => void appPort().openExternal("download")}
+          onDismiss={() => setRequiredUpdateDismissed(true)}
+        />
+      </Show>
+      <Show when={started() && !updateRequired()}>
         <Show
           when={gateAccount()}
           fallback={
@@ -198,6 +215,7 @@ export function AppAccessGate() {
       <WhatsNewOverlay
         ready={
           !platform.chatWindow &&
+          !updateRequired() &&
           !splashShown() &&
           gateAccount() !== null &&
           (setup.setupState()?.completed === true || !scope.connection.hasContent)

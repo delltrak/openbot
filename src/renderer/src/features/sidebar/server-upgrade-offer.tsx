@@ -10,6 +10,7 @@ interface StorageCard {
 
 /** The local build shows the storage card without opening the cloud billing dialog. */
 export function ServerUpgradeOffer(_props: {
+  billing?: unknown;
   card: StorageCard | null;
   server: ServerSummary | undefined;
   blocked: boolean;
